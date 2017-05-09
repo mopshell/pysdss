@@ -1,0 +1,31 @@
+{
+	"-ot":"",
+	"-of":"",
+	"-co":"",
+	"-zfield":"",
+	"-z_increase":"",
+	"-z_multiply":"lk",
+	"-a_srs":"",
+	"-spat":"",
+	"-clipsrc":"pp",
+	"-clipsrcsql":"",
+	"-clipsrclayer":"",
+	"-clipsrcwhere":"",
+	"-l":"jj",
+	"-where":"",
+	"-sql":"",
+	"-txe":"",
+	"-tye":"",
+	"-outsize":"",
+	"-a": {
+			"name": "average",
+			"radius1":"1",
+			"radius2":"1",
+			"angle":"0",
+			"minpoints":"1",
+			"nodata":"0"
+	},
+	"-q":"",
+	"src_datasource":"",
+	"dst_filename":""
+}

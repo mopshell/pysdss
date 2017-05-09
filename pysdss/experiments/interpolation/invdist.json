@@ -1,0 +1,31 @@
+{
+	"-ot": "Float32",
+	"-of": "GTiff",
+	"-co": "",
+	"-zfield": "",
+	"-z_increase": "",
+	"-z_multiply": "",
+	"-a_srs": "EPSG:32611",
+	"-spat": "",
+	"-clipsrc": "",
+	"-clipsrcsql": "",
+	"-clipsrclayer": "",
+	"-clipsrcwhere": "",
+	"-l": "",
+	"-where": "",
+	"-sql": "",
+	"-txe": "",
+	"-tye": "",
+	"-outsize": "",
+	"-a": {
+			"name": "invdist",
+			"radius1": "",
+			"radius2": "",
+			"angle": "0",
+			"min_points": "1",
+			"nodata": "-1"
+		},
+	"-q": "",
+	"src_datasource": "",
+	"dst_filename": ""
+}

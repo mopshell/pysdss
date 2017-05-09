@@ -1,0 +1,25 @@
+Select data for color grade "D"
+
+Filter out value 0
+
+Interpolate with moving average to get the "truth" image. Assign nodata value 0
+
+Convert image to an indexed array and get the nodata index
+
+Interpolate with nearest neyghbour to get to row image (pixel value is the nearest row)
+
+Convert image to indexed array using the previous nodata index. This array will be used to creater a mask for each row
+
+loop for increased filtering (e.g step):
+	apply filterig step to the data
+	interpolate with inverse distance
+	convert image to array and apply index
+	
+	loop for each row:
+		create a mask for a row
+		apply mask to "truth" and interpolated array
+		calculate statistics for this row
+		compare truth and interpolated and calculate some statistics
+		
+	
+	

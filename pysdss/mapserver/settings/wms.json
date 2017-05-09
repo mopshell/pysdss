@@ -1,0 +1,43 @@
+{
+  "MAP":{
+      "NAME":"",
+      "EXTENT":[],
+      "UNITS":"",
+      "SHAPEPATH":"data",
+      "SIZE":[],
+      "IMAGETYPE":"JPEG",
+      "PROJECTION":[],
+      "WEB":{
+        "IMAGEPATH": "/var/www/html/grapes/tmp/",
+        "IMAGEURL":  "http://localhost:8080/grapes/tmp/",
+        "METADATA":{
+            "WMS_TITLE": "",
+            "WMS_ABSTRACT": "",
+            "WMS_ACCESSCONSTRAINTS": "none",
+            "WMS_ENABLE_REQUEST": "*",
+            "WMS_ONLINERESOURCE": "",
+            "WMS_SRS":""
+        }
+      },
+      "LAYERS":[
+        {
+          "NAME":"",
+          "STATUS":"ON",
+          "TYPE":"RASTER",
+          "DATA":"",
+            "METADATA":{
+              "WMS_TITLE": "",
+              "WMS_SRS": "",
+              "WMS_ENABLE_REQUEST": "*"
+          },
+          "CLASS":{
+            "EXPRESSION": "",
+            "STYLE":{
+              "COLOR":[255,0,0]
+            }
+          }
+
+        }
+      ]
+  }
+}

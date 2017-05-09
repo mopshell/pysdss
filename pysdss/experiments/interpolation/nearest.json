@@ -1,0 +1,29 @@
+{
+	"-ot":"Int16",
+	"-of":"GTiff",
+	"-co":"",
+	"-zfield":"",
+	"-z_increase":"",
+	"-z_multiply":"",
+	"-a_srs":"EPSG:32611",
+	"-spat": "",
+	"-clipsrc": "",
+	"-clipsrcsql": "",
+	"-clipsrclayer": "",
+	"-clipsrcwhere": "",
+	"-l": "",
+	"-where": "",
+	"-sql": "",
+	"-txe": "",
+	"-tye": "",
+	"-outsize": "",
+	"-a": {
+		"name": "nearest",
+		"radius1":"0.5",
+		"radius2":"0.5",
+		"nodata":"-1"
+	},
+	"-q":"",
+	"src_datasource": "",
+	"dst_filename": ""
+}
