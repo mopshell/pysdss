@@ -13,6 +13,7 @@
 
 import pandas as pd
 import math
+import random
 #import json
 #import shutil
 #import warnings
@@ -918,6 +919,7 @@ def test_interpret_result(stats, id, folder):
     :param stats:
         dictionary in the form
         {step:{"colorgrade": { row : {'truth':{},'interpolated':{} }} } }
+    :param rsme: True to calculate rootmeansquare error
     :return: None
     '''
 
@@ -936,7 +938,7 @@ def test_interpret_result(stats, id, folder):
         cols += ["step"+str(s)+"_"+i for i in colmodel]
     print(cols)
     print(len(cols))
-    cols=','.join(cols)
+
 
     # calculate the number of columns for the result
     ncolumns = NCOL * (nsteps + 1) + 1
@@ -985,10 +987,92 @@ def test_interpret_result(stats, id, folder):
                     for i in range(NCOL):
                         output[nrow, i + 1 + (NCOL*2) + NCOL*(n-1)] = interp[i] # 1row + 5truth + 5firststep + other steps
 
+        outcols = ','.join(cols)
         #save array to disk as a csv for this color grade
-        np.savetxt(folder + id +"_"+j+"_output.csv",output , fmt='%.3f', delimiter=',', newline='\n', header=cols, footer='', comments='')
+        np.savetxt(folder + id +"_"+j+"_output.csv",output , fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='', comments='')
 
-def test_compare_raster_totruth(point, id, folder,epsg=32611, step=[2, 3, 4,10], clean=None):
+
+def calculate_rmse_row(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a","b","c","d"]):
+    """
+    rmse based on comparison with the rasterized points
+    """
+    #open a random csv as pandas
+    path = folder + id + "_" + random.choice(colorgrades) + "_output.csv"
+    file = pd.read_csv(path)
+
+    outtext = ""
+
+    # calculate rmse for visible count (this is the same for all colour grade files)
+    for e,c in enumerate(nsteps):
+        outtext += "step"+str(c)+"_visible_avg\t" + str(utils.rmse( file["step"+str(c)+"_visible_avg"].values, file["visible_avg"].values)) + "\n"
+
+    for e,c in enumerate(colorgrades):
+        #for each step
+        path = folder + id + "_" + c + "_output.csv"
+        file = pd.read_csv(path)
+        for j,x in enumerate(nsteps):
+
+            outtext += "step" + str(x) + "_avg\t"+ str(utils.rmse(file["step" + str(x) + "_avg"].values, file["avg"].values)) + "\n"
+
+    with open(folder + id + "_rmse_row.csv","w") as f:
+        f.write(outtext)
+
+
+def calculate_rmse(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a","b","c","d"]):
+    """
+    rmse based on comparison with the original points
+    :param folder: 
+    :param id: 
+    :param nsteps: 
+    :param colorgrades: 
+    :return: 
+    """
+
+    rowname = "row"
+    stepcount = len(nsteps)
+    colorcount = len(colorgrades)
+
+    path = folder + id + "_ERRORSTATISTICS.csv"
+    df = pd.read_csv(path)
+
+    #get name unique rows and initialize an empty array for the output
+    rows = df[rowname].unique()
+    arr = np.zeros((len(rows), 2 + stepcount+ colorcount + stepcount*colorcount))
+
+    #iterate the row
+    for i,row in enumerate(rows):
+        # select one vineyard row
+        fdf = df[df[rowname] == row]
+
+        #set value for row and average visible_fruit_per_m for the current row
+        arr[i,0] = row
+        arr[i, 1] = fdf['visible_fruit_per_m'].mean()
+
+        # calculate rmse for visible count
+        for e, c in enumerate(nsteps):
+            arr[i,2 + e] = utils.rmse(fdf["step" + str(c) + "visible"].values, fdf["visible_fruit_per_m"].values)
+
+        #set average value for colorgrades for the current row
+        for e,c in enumerate(colorgrades):
+            idxstart = 2 + stepcount
+            arr[i, idxstart + e] = fdf[c].mean()
+
+        # calculate root mean square error for colorgrades
+        for e,c in enumerate(colorgrades):
+            idxstart = 2 + stepcount + colorcount + (e * stepcount)
+            for j, x in enumerate(nsteps):
+                arr[i, idxstart + j] = utils.rmse(fdf["step" + str(x) + c].values, fdf[c].values)
+
+    #set xolumn names and save as a csv file
+    cols = ['row', 'visible_avg']
+    cols += ["visible_step"+str(s)+"_rmse" for s in nsteps]
+    cols +=  [i + "_avg" for i in colorgrades]
+    cols += ["step" + str(i) + "_" + c + "_rmse" for c in colorgrades for i in nsteps]
+    outcols = ','.join(cols)
+    np.savetxt(folder + id + "_rsme_row.csv",arr , fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='', comments='')
+
+
+def test_compare_raster_totruth(point, id, folder,epsg=32611, step=[2, 3, 4,10], removeduplicates=True, clean=None):
 
         # 1 open  csv
 
@@ -996,7 +1080,13 @@ def test_compare_raster_totruth(point, id, folder,epsg=32611, step=[2, 3, 4,10],
         #folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
         #point = folder + id + "_keep.csv"
 
-        df = pd.read_csv(point, usecols=["id", "row", "a", "b", "c", "d", "raw_fruit_count", "visible_fruit_per_m"])
+        if removeduplicates:
+            # remove duplicates and save to newfile, set name for point file
+            df = utils.remove_duplicates(point, ["lat", "lon"], operation="mean")
+            point = folder + id + "_keep_nodup.csv"
+            df.to_csv(point)
+        else:
+            df = pd.read_csv(point, usecols=["id", "row", "a", "b", "c", "d", "raw_fruit_count", "visible_fruit_per_m"])
 
         # 2 extract
         #step = [2, 3, 4,10]
@@ -1042,14 +1132,22 @@ if __name__ == "__main__":
 
     steps=[2,3,4,5,6,7,8,9,10]
     #id, stats = berrycolor_workflow_1(steps,"average")
+    #id, stats = berrycolor_workflow_1(steps,"average")
     #folder = "/vagrant/code/pysdss/data/output/text/"+id+"/"
     #fileIO.save_object( folder + id + "_statistics", stats)
     #id = "a8aa8edad1c9d457b826f3e156edf0fae"
     #folder = "/vagrant/code/pysdss/data/output/text/" +id + "/"
     #stats = fileIO.load_object(folder + id + "_statistics")
     #test_interpret_result(stats,id,folder)
-    id = "a5d75134d88a843f388af925670d89772"
-    folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
-    point = folder + id + "_keep.csv"
+    #id = "a5d75134d88a843f388af925670d89772"
+    #folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+    #point = folder + id + "_keep.csv"
     #test_compare_raster_totruth(point,"a0857fd6fbb0e4f6fbacb26b1a984779a", folder,step=steps )
-    test_compare_raster_totruth(point, id, folder,step=steps, clean=[[-1],[0]])
+    #test_compare_raster_totruth(point, id, folder,step=steps, clean=[[-1],[0]])
+
+
+    id = "a9dd672655abb4188b6d8ac2cc830b3e4"
+    folder = "/vagrant/code/pysdss/data/output/text/workflow1/inversedistancetopower/190517/"+ id + "/"
+    point = folder + id + "_keep.csv"
+    #test_compare_raster_totruth(point, id, folder, step=steps, clean=[[-1], [0]])
+    calculate_rmse(folder, id)

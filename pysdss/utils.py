@@ -16,6 +16,7 @@
 #               -   get possible band combinations ( where band1-band2 is different from band2- band1)
 #               -   Convert a list of tuples,each tuple with a band combination, to a list of formatted strings
 #               -   Replace values in a dataframe
+#               -   Calculate the root mean square error
 #
 # Author:      claudio piccinini
 #
@@ -402,6 +403,15 @@ def clean_dataframe (df,invalues,outvalues): # TODO check the use of  DataFrame.
         df[msk] = outvalues[i]
 
 
+def rmse(predictions, targets):
+    """
+    Calculate the root mean square error
+    :param predictions: numpy array 
+    :param targets: numpy array 
+    :return: the rmse
+    """
+    return np.sqrt(((predictions - targets) ** 2).mean())
+
 
 if __name__ == "__main__":
 
@@ -508,4 +518,4 @@ if __name__ == "__main__":
         df = remove_duplicates(file, [" Latitude", " Longitude"])
         df.to_csv(file+"_head.csv", index=False)
 
-    test_remove_duplicates()
+    #test_remove_duplicates()
