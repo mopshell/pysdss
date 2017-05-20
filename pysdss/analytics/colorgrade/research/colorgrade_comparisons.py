@@ -1072,7 +1072,7 @@ def calculate_rmse(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a","b
     np.savetxt(folder + id + "_rsme_row.csv",arr , fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='', comments='')
 
 
-def test_compare_raster_totruth(point, id, folder,epsg=32611, step=[2, 3, 4,10], removeduplicates=True, clean=None):
+def test_compare_raster_totruth(point, id, folder,epsg=32611, step=[2, 3,4,5,6,7,8,9,10], removeduplicates=True, clean=None):
 
         # 1 open  csv
 
@@ -1127,6 +1127,70 @@ def test_compare_raster_totruth(point, id, folder,epsg=32611, step=[2, 3, 4,10],
         outdf.to_csv(folder + id + "_ERRORSTATISTICS.csv")
 
 
+def estimate_berries_byrow(id, folder, step=[2, 3, 4, 5, 6, 7, 8, 9, 10]):
+
+    """ Output comparison between original points and interploated points for average, std, estimated number per row
+    :param id: 
+    :param folder: 
+    :param step: 
+    :return: 
+    """
+
+    left_fields = ["row","length","visible_m_avg_original","visible_m_std_original","estimated_berries_original"]
+    right_fields = ["visible_m_avg", "delta_avg", "visible_std", "delta_std", "estimated_berries", "delta_estimates"]
+
+
+    # calculate row length
+    lengths = utils.row_length(folder + id + "_keep.csv", "lon", "lat", "row", conversion_factor=1)
+    # initialize output array
+    out = np.zeros((lengths.shape[0], 5 + (len(steps)+1)*6))
+    out[:,0:2] = lengths
+
+    # open  _ERRORSTATISTICS and calculate average and std per row for the visible count
+    path = folder + id + "_ERRORSTATISTICS.csv"
+    df = pd.read_csv(path, usecols=['row', 'visible_fruit_per_m'])
+
+    # open one of the files with the statistics for the rasterized data
+    path = folder + id + "_d_output.csv"
+    df2 = pd.read_csv(path)
+
+    #gey statistics for original points and rasterized points
+    rows = lengths[:,0]
+    for i,row in enumerate(rows):
+        # select one vineyard row
+        fdf = df[df['row'] == row]
+
+        out[i, 2] = fdf['visible_fruit_per_m'].mean()
+        out[i, 3] = fdf['visible_fruit_per_m'].std()
+        out[i, 4] = out[i, 1] * out[i, 2]
+
+        out[i, 5] = df2["visible_avg"].values[i]
+        out[i, 6] = np.absolute(out[i, 5] - out[i, 2])
+        out[i, 7] = df2["visible_std"].values[i]
+        out[i, 8] = np.absolute(out[i, 7] - out[i, 3])
+        out[i, 9] = out[i, 1] * out[i, 5]
+        out[i, 10] = np.absolute(out[i, 9] -  out[i, 4])
+
+    # get statistics for interpolated filtered points
+    idxstart = 11
+    for s in step:
+        for i, row in enumerate(rows):
+            out[i, idxstart] = df2[ "step"+str(s)+"_visible_avg"].values[i]
+            out[i, idxstart+1] = np.absolute(out[i, idxstart] - out[i, 2])
+            out[i, idxstart+2] = df2["step"+str(s)+"_visible_std"].values[i]
+            out[i, idxstart+3] = np.absolute(out[i, idxstart+2] - out[i, 3])
+            out[i, idxstart+4] = out[i, 1] * out[i, idxstart]
+            out[i, idxstart+5] = np.absolute(out[i, idxstart+4] - out[i, 4])
+        idxstart += len(right_fields)
+
+    # save array to disk
+    cols = left_fields + right_fields
+    cols += ["step"+str(x)+"_"+ i  for x in step for i in right_fields ]
+    outcols = ','.join(cols)
+    np.savetxt(folder + id + "_count_stats_byrow.csv", out, fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='',
+               comments='')
+
+
 if __name__ == "__main__":
     pass
 
@@ -1146,8 +1210,12 @@ if __name__ == "__main__":
     #test_compare_raster_totruth(point, id, folder,step=steps, clean=[[-1],[0]])
 
 
-    id = "a9dd672655abb4188b6d8ac2cc830b3e4"
-    folder = "/vagrant/code/pysdss/data/output/text/workflow1/inversedistancetopower/190517/"+ id + "/"
-    point = folder + id + "_keep.csv"
+    #id = "a9dd672655abb4188b6d8ac2cc830b3e4"
+    #folder = "/vagrant/code/pysdss/data/output/text/workflow1/inversedistancetopower/190517/"+ id + "/"
+    #point = folder + id + "_keep.csv"
     #test_compare_raster_totruth(point, id, folder, step=steps, clean=[[-1], [0]])
-    calculate_rmse(folder, id)
+    #calculate_rmse(folder, id)
+
+    id = "a5d75134d88a843f388af925670d89772"
+    folder = "/vagrant/code/pysdss/data/output/text/workflow1/movingaverage/"+ id + "/"
+    estimate_berries_byrow(id, folder)
