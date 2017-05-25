@@ -1020,7 +1020,7 @@ def calculate_rmse_row(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a
 
 def calculate_rmse(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a","b","c","d"]):
     """
-    rmse based on comparison with the original points
+    rmse based on comparison with the original points (this is preferred to calculate_rmse_row)
     :param folder: 
     :param id: 
     :param nsteps: 
