@@ -992,7 +992,7 @@ def test_interpret_result(stats, id, folder):
         np.savetxt(folder + id +"_"+j+"_output.csv",output , fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='', comments='')
 
 
-def calculate_rmse_row(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a","b","c","d"]):
+def calculate_rmse_row_0(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a","b","c","d"]):
     """
     rmse based on comparison with the rasterized points
     """
@@ -1018,7 +1018,7 @@ def calculate_rmse_row(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a
         f.write(outtext)
 
 
-def calculate_rmse(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a","b","c","d"]):
+def calculate_rmse_row(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a","b","c","d"]):
     """
     rmse based on comparison with the original points (this is preferred to calculate_rmse_row)
     :param folder: 
@@ -1071,6 +1071,47 @@ def calculate_rmse(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a","b
     outcols = ','.join(cols)
     np.savetxt(folder + id + "_rsme_row.csv",arr , fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='', comments='')
 
+
+def calculate_rmse(folder,id,nsteps=[2,3,4,5,6,7,8,9,10]):
+    """
+    Calculate the root mean square error for the visible per meter average and the estimated berries . The differences
+    are calculated per number of vineyard rows and the number of items are the rows
+    :param folder: 
+    :param id: 
+    :param nsteps: 
+    :return: 
+    """
+
+    #create pandas dataframe
+    path = folder + id + "_count_stats_byrow.csv"
+    df = pd.read_csv(path)
+
+    # number of vineyard rows
+    nrows = df.shape[0]
+
+    # store the output field named
+    outcols_0 = []
+    outcols_1 = []
+
+    #cretae empty numpy array
+    arr = np.zeros((1, len(steps)*2))
+
+    #iterate the steps and fill in the array
+    for i,s in enumerate(nsteps):
+
+        #rmse for visible_avg, add to the output array, append the column name
+        x =  math.sqrt((np.sum(np.power(df["step"+str(s)+"_delta_avg"].values,2))/nrows))
+        arr[0, i] = x
+        outcols_0.append("step"+str(s)+"_delta_avg_rmse")
+        #rmse for estimated berries, add to the output array, append the column name
+        y = math.sqrt((np.sum(np.power(df["step"+str(s)+"_delta_estimates"].values, 2)) / nrows))
+        arr[0, i+len(steps)] = y
+        outcols_1.append("step"+str(s)+"_delta_estimates_rmse")
+
+    outcols_0 += outcols_1
+    outcols = ','.join(outcols_0)
+    #export array to disk
+    np.savetxt(folder + id + "_rsme.csv",arr , fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='', comments='')
 
 def test_compare_raster_totruth(point, id, folder,epsg=32611, step=[2, 3,4,5,6,7,8,9,10], removeduplicates=True, clean=None):
 
@@ -1214,8 +1255,19 @@ if __name__ == "__main__":
     #folder = "/vagrant/code/pysdss/data/output/text/workflow1/inversedistancetopower/190517/"+ id + "/"
     #point = folder + id + "_keep.csv"
     #test_compare_raster_totruth(point, id, folder, step=steps, clean=[[-1], [0]])
+    #calculate_rmse_row(folder, id)
+
+    #id = "a5d75134d88a843f388af925670d89772"
+    #folder = "/vagrant/code/pysdss/data/output/text/workflow1/movingaverage/"+ id + "/"
+    #estimate_berries_byrow(id, folder)
+
+
+    #id = "a9dd672655abb4188b6d8ac2cc830b3e4"
+    #folder = "/vagrant/code/pysdss/data/output/text/workflow1/inversedistancetopower/190517/" + id + "/"
+    #estimate_berries_byrow(id, folder)
     #calculate_rmse(folder, id)
 
-    id = "a5d75134d88a843f388af925670d89772"
-    folder = "/vagrant/code/pysdss/data/output/text/workflow1/movingaverage/"+ id + "/"
-    estimate_berries_byrow(id, folder)
+    #id = "a5d75134d88a843f388af925670d89772"
+    #folder = "/vagrant/code/pysdss/data/output/text/workflow1/movingaverage/" + id + "/"
+    #estimate_berries_byrow(id, folder)
+    #calculate_rmse(folder, id)
