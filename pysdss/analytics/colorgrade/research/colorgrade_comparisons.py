@@ -1232,6 +1232,40 @@ def estimate_berries_byrow(id, folder, step=[2, 3, 4, 5, 6, 7, 8, 9, 10]):
                comments='')
 
 
+def chart_rmse(folder,id):
+    """Chart the rmse
+    :param folder: 
+    :param id: 
+    :return: 
+    """
+
+    from bokeh.plotting import figure
+    from bokeh.io import output_file,  save
+
+    #open pandas dataframe
+    path = folder + id + "_rsme.csv"
+    df = pd.read_csv(path)
+
+    ncols = df.shape[1]
+
+    #make new chart directory if it does not exist
+    if not os.path.exists(folder +"/charts"):
+        os.mkdir(folder + "/charts")
+
+    #chart ["stepx_delta_avg_rmse"]
+    output_file(folder + "/charts/delta_avg_rmse.html")
+    f = figure()
+    f.line(list(range(0,int(ncols/2))) , df.values[0,0:int(ncols/2)], line_width=2)
+    save(f)
+
+    #chart ("stepx_delta_estimates_rmse")
+    output_file(folder + "/charts/delta_estimates_rmse.html")
+    f = figure()
+    f.line(list(range(int(ncols/2),ncols)) , df.values[0,int(ncols/2):], line_width=2)
+    save(f)
+
+
+
 if __name__ == "__main__":
     pass
 
@@ -1271,3 +1305,8 @@ if __name__ == "__main__":
     #folder = "/vagrant/code/pysdss/data/output/text/workflow1/movingaverage/" + id + "/"
     #estimate_berries_byrow(id, folder)
     #calculate_rmse(folder, id)
+
+    ##output plots
+    id = "a5d75134d88a843f388af925670d89772"
+    folder = "/vagrant/code/pysdss/data/output/text/workflow1/movingaverage/" + id + "/"
+    chart_rmse(folder,id)

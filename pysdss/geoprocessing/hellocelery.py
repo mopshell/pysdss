@@ -31,6 +31,6 @@ def synchronous_test_1(*args, **kw):
 
 
 def asynchronous_test_1(*args, **kw):
-    raise Exception(["error","error info here"]) # ["error"] will be the value for result.get()
+    #raise Exception(["error","error info here"]) # ["error"] will be the value for result.get()
     time.sleep(15)
     return [{"name": "", "type": "string", "message": "asynch finished", "value":[kw]}]
