@@ -451,7 +451,7 @@ def test_interpolate_and_filter():
 ##############berry workflow 1  # the following functions are for comparisons between dense data and filtered data
 #### data is hardcoded because these are not production functions
 
-def berrycolor_workflow_1(steps=[2,3,4], interp="invdist"):
+def berrycolor_workflow_1_original(steps=[2,3,4], interp="invdist"):
     """
     similar to interpolate_and_filter but here as input i am using the original csv file and I am considering the
     number of berries as well
@@ -907,6 +907,501 @@ def berrycolor_workflow_1(steps=[2,3,4], interp="invdist"):
     return id,stats
     #{2: {"a": {1: {'truth': {}, 'interpolated': {}}}}}
 
+
+
+
+############################################   30 05 2017 ######################################
+
+##add parameter that specify we want random filtered data for row  ( take first/last and then random in between the 2)
+##add parameter to force inteerpolation for points in the same row only (for higher filters the interpolation radius will
+##overlap with points belonging to adjacent rows
+
+#so there are 4 possibilities for each interpolation method (so far inverse distance and moving average, kriging will follow)
+# ordered filter, free interpolation
+# ordered filter, interpolation by row only
+# random filter, free interpolation
+# random filter, interpolation by row only
+
+#for random filter the radius is calculated with the max distance between points on the same row
+
+
+#for the inverse distance at present the power is set to the default value 2, the interpolation should be repeated for
+#different power values and then root mean square error should be calculated to decide the optimal radius
+#actually it should be also possible to experiment different radius setting, therefore creating a matrix radius/power
+
+
+#           pow1    pow2    pow3    ...
+#   radius1  x       x       x
+#   radius2  x       x       x      ...
+#   radius3  x       x       x      ...
+#   radius4  x       x       x      ...
+
+
+def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False, force_interpolation_by_row=False):
+    """
+    similar to interpolate_and_filter but here as input i am using the original csv file and I am considering the
+    number of berries as well
+
+    steps: the filtering steps to use
+    interp: the interpolation method to use on the filtered data   "invdist" or "average", kriging will be added later
+    random filter:   true to take random points (e,g step2 takes 50% random points for each row, false use ordered filter
+    (e.g. step2 takes 1 point every 2 points)
+    force_interpolation : true if i want to be sure the points belong to the current row only
+    :return:
+    """
+
+    if interp not in ["invdist", "average"]:
+        raise ValueError("Interpolation should be 'invdist' or 'average'")
+
+    jsonpath = os.path.join(os.path.dirname(__file__), '../../../..', "pysdss/experiments/interpolation/")
+    jsonpath = os.path.normpath(jsonpath)
+
+    # 1 download filtered data with the chosen and create a dataframe
+
+    folder = "/vagrant/code/pysdss/data/output/text/"
+    experimentfolder = "/vagrant/code/pysdss/experiments/interpolation/"
+
+    # create a folder to store the output
+    id = utils.create_uniqueid()
+    if not os.path.exists(folder + id):
+        os.mkdir(folder + id)
+    folder = folder + id + "/"
+
+    # create a directory to store settings
+    # if not os.path.exists(experimentfolder + str(id)):
+    #   os.mkdir(experimentfolder + str(id))
+    # dowload_data_test(id, folder)
+
+
+
+    # dowload the data #TODO: create function to read from the database
+    df = pd.read_csv("/vagrant/code/pysdss/data/input/2016_06_17.csv",
+                     usecols=["%Dataset_id", " Row", " Raw_fruit_count",
+                              " Visible_fruit_per_m", " Latitude", " Longitude", "Harvestable_A", "Harvestable_B",
+                              "Harvestable_C", "Harvestable_D"])
+    df.columns = ["id", "row", "raw_fruit_count", "visible_fruit_per_m", "lat", "lon", "a", "b", "c", "d"]
+
+    # here should be necessary some mapping to get the column names
+
+
+    # 2 filter data and save to disk . this is the "truth" so we just delete the zeros
+    # 1/03/17  we don't filter
+    # keep, discard = filter.filter_byvalue(df, 0, ">", colname="d")
+    keep = df
+
+    # 3 save filtered data to disk after reprojection
+    # reproject latitude, longitude #WGS 84 / UTM zone 11N
+    west, north = utils2.reproject_coordinates(keep, "epsg:32611", "lon", "lat", False)
+    filter.set_field_value(keep, west, "lon")
+    filter.set_field_value(keep, north, "lat")
+    filter.set_field_value(keep, 0, "keepa")
+    filter.set_field_value(keep, 0, "keepb")
+    filter.set_field_value(keep, 0, "keepc")
+    filter.set_field_value(keep, 0, "keepd")
+    keep.to_csv(folder + id + "_keep.csv", index=False)
+
+    '''west,north =utils.reproject_coordinates(discard, "epsg:32611", "lon", "lat", False)
+    filter.set_field_value(discard, west,"lon")
+    filter.set_field_value(discard, north,"lat")
+    filter.set_field_value(discard, 0, "keepd")
+    discard.to_csv(folder + id +"_discard.csv",index=False)'''
+
+    # 4 create the virtualdataset header for the datafile
+
+    with open(jsonpath + "/vrtmodel.txt") as f:
+        xml = f.read()
+
+    # output the 4 virtual files for the 4 columns
+    # for clr in ["a"]:
+    for clr in ["a", "b", "c", "d"]:
+        data = {"layername": id + "_keep", "fullname": folder + id + "_keep.csv", "easting": "lon", "northing": "lat",
+                "elevation": clr}
+        utils2.make_vrt(xml, data, folder + id + "_keep" + clr + ".vrt")
+
+    # output the virtual files for raw fruit count and visible fruit count
+    data = {"layername": id + "_keep", "fullname": folder + id + "_keep.csv", "easting": "lon", "northing": "lat",
+            "elevation": "raw_fruit_count"}
+    utils2.make_vrt(xml, data, folder + id + "_keep_rawfruit.vrt")
+
+    data = {"layername": id + "_keep", "fullname": folder + id + "_keep.csv", "easting": "lon", "northing": "lat",
+            "elevation": "visible_fruit_per_m"}
+    utils2.make_vrt(xml, data, folder + id + "_keep_visiblefruit.vrt")
+
+    # 5 define an interpolation grid (the user can choose an existing grid or draw on screen)
+    # here i am doing manually for testing, i just take the bounding box
+
+    minx = math.floor(keep['lon'].min())
+    maxx = math.ceil(keep['lon'].max())
+    miny = math.floor(keep['lat'].min())
+    maxy = math.ceil(keep['lat'].max())
+    delty = maxy - miny  # height
+    deltx = maxx - minx  # width
+
+    area_multiplier = 2  # 2 to double the resulution and halve the pixel size to 0.5 meters
+
+    # 6 log a running process to the database
+    # 7 save grid metadata and interpolation metadata to the database historic tables
+    # 8 execute gridding with gdal_array (set nodata value to zero or other value)
+
+
+    path = jsonpath + "/average.json"
+    params = utils.json_io(path, direction="in")
+
+    params["-txe"] = str(minx) + " " + str(maxx)
+    params["-tye"] = str(miny) + " " + str(maxy)
+    # pixel is 0.5 meters
+    params["-outsize"] = str(deltx * area_multiplier) + " " + str(delty * area_multiplier)
+
+    # for clr in ["a"]:
+    for clr in ["a", "b", "c", "d"]:
+
+        params["src_datasource"] = folder + id + "_keep" + clr + ".vrt"
+        params["dst_filename"] = folder + id + "_" + clr + ".tiff"
+
+        # build gdal_grid request
+        text = grd.build_gdal_grid_string(params, outtext=False)
+        print(text)
+        text = ["gdal_grid"] + text
+        print(text)
+
+        # call gdal_grid
+        print("Getting the 'truth' raster for color " + clr)
+        out, err = utils.run_tool(text)
+        print("output" + out)
+        if err:
+            print("error:" + err)
+            raise Exception("gdal grid failed")
+
+    ##rasterize raw fruit and visible fruit
+
+    params["src_datasource"] = folder + id + "_keep_rawfruit.vrt"
+    params["dst_filename"] = folder + id + "_rawfruit.tiff"
+
+    # build gdal_grid request
+    text = grd.build_gdal_grid_string(params, outtext=False)
+    print(text)
+    text = ["gdal_grid"] + text
+    print(text)
+
+    # call gdal_grid
+    print("Getting the 'truth' raster for raw fruit count")
+    out, err = utils.run_tool(text)
+    print("output" + out)
+    if err:
+        print("error:" + err)
+        raise Exception("gdal grid failed")
+
+    params["src_datasource"] = folder + id + "_keep_visiblefruit.vrt"
+    params["dst_filename"] = folder + id + "_visiblefruit.tiff"
+
+    # build gdal_grid request
+    text = grd.build_gdal_grid_string(params, outtext=False)
+    print(text)
+    text = ["gdal_grid"] + text
+    print(text)
+
+    # call gdal_grid
+    print("Getting the 'truth' raster for visible fruit per m")
+    out, err = utils.run_tool(text)
+    print("output" + out)
+    if err:
+        print("error:" + err)
+        raise Exception("gdal grid failed")
+
+    # 9 add result url to the database table
+    # 10 log completed process (maybe should add the location of the result
+
+
+    # 11 define the indexed array for the images, I used the same interpolation method and parameters therefore the index
+    #  is the same
+
+    # for clr in ["a"]:
+    for clr in ["a", "b", "c", "d"]:
+        d = gdal.Open(folder + id + "_" + clr + ".tiff")
+        index, r_indexed, properties = gdalIO.raster_dataset_to_indexed_numpy(d, id, maxbands=1, bandLocation="byrow",
+                                                                              nodata=-1)
+        print("saving indexed array to disk")
+        fileIO.save_object(folder + id + "_indexedarray_" + clr, (index, r_indexed, properties))
+        d = None
+
+    # define the indexed array for the raw and visible fruit
+    d = gdal.Open(folder + id + "_rawfruit.tiff")
+    index, r_indexed, properties = gdalIO.raster_dataset_to_indexed_numpy(d, id, maxbands=1, bandLocation="byrow",
+                                                                          nodata=-1)
+    print("saving indexed array to disk")
+    fileIO.save_object(folder + id + "_indexedarray_rawfruit", (index, r_indexed, properties))
+    d = None
+
+    d = gdal.Open(folder + id + "_visiblefruit.tiff")
+    index, r_indexed, properties = gdalIO.raster_dataset_to_indexed_numpy(d, id, maxbands=1, bandLocation="byrow",
+                                                                          nodata=-1)
+    print("saving indexed array to disk")
+    fileIO.save_object(folder + id + "_indexedarray_visiblefruit", (index, r_indexed, properties))
+    d = None
+
+    ######## rasterize rows with nearest neighbour
+
+    data = {"layername": id + "_keep", "fullname": folder + id + "_keep.csv", "easting": "lon", "northing": "lat",
+            "elevation": "row"}
+    utils2.make_vrt(xml, data, folder + id + "_keep_row.vrt")
+    '''newxml = xml.format(**data)
+    f = open(folder + id+"_keep_row.vrt", "w")
+    f.write(newxml)
+    f.close()'''
+
+    path = jsonpath + "/nearest.json"
+    params = utils.json_io(path, direction="in")
+
+    params["-txe"] = str(minx) + " " + str(maxx)
+    params["-tye"] = str(miny) + " " + str(maxy)
+    params["-outsize"] = str(deltx * area_multiplier) + " " + str(delty * area_multiplier)
+    params["src_datasource"] = folder + id + "_keep_row.vrt"
+    params["dst_filename"] = folder + id + "_row.tiff"
+
+    # build gdal_grid request
+    text = grd.build_gdal_grid_string(params, outtext=False)
+    print(text)
+    text = ["gdal_grid"] + text
+    print(text)
+
+    # call gdal_grid
+    print("Getting the row raster")
+    out, err = utils.run_tool(text)
+    print("output" + out)
+    if err:
+        print("error:" + err)
+        raise Exception("gdal grid failed")
+
+    # upload to numpy
+    d = gdal.Open(folder + id + "_row.tiff")
+    band = d.GetRasterBand(1)
+    # apply index
+    row_indexed = gdalIO.apply_index_to_single_band(band,
+                                                    index)  # this is the last index from the fruit count, all the indexes are the same
+    d = None
+
+    # collect statistics for the comparisons
+    stats = {}
+    # mean=[]
+    # std=[]
+
+    ####### get the indexed array for raw count
+    index_raw, r_indexed_raw, properties_raw = fileIO.load_object(folder + id + "_indexedarray_rawfruit")
+    ####### get the indexed array for visible count
+    index_visible, r_indexed_visible, properties_visible = fileIO.load_object(
+        folder + id + "_indexedarray_visiblefruit")
+
+    # define new rasters increasing the data filtering and interpolating TODO: create configuration files for automation
+    for step in steps:
+
+        # add dictionary for this step
+        stats[step] = {}
+
+        # filter data by step
+        k, d = filter.filter_bystep(keep, step=step)
+
+        '''
+        i already projected before
+        west, north = utils.reproject_coordinates(k, "epsg:32611", "lon", "lat", False)
+        filter.set_field_value(k, west, "lon")
+        filter.set_field_value(k, north, "lat")
+        filter.set_field_value(k, 0, "keepa")
+        filter.set_field_value(k, 0, "keepb")
+        filter.set_field_value(k, 0, "keepc")
+        filter.set_field_value(k, 0, "keepd")'''
+        k.to_csv(folder + id + "_keep_step" + str(step) + ".csv", index=False)
+
+        '''west, north = utils.reproject_coordinates(d, "epsg:32611", "lon", "lat", False)
+        filter.set_field_value(d, west, "lon")
+        filter.set_field_value(d, north, "lat")
+        filter.set_field_value(d, 0, "keepa")
+        filter.set_field_value(d, 0, "keepb")
+        filter.set_field_value(d, 0, "keepc")
+        filter.set_field_value(d, 0, "keepd")'''
+        d.to_csv(folder + id + "_discard_step" + str(step) + ".csv", index=False)
+
+        # for clr in ["a"]:
+        for clr in ["a", "b", "c", "d"]:
+            data = {"layername": id + "_keep_step" + str(step),
+                    "fullname": folder + id + "_keep_step" + str(step) + ".csv", "easting": "lon", "northing": "lat",
+                    "elevation": clr}
+            utils2.make_vrt(xml, data, folder + id + "_keep" + clr + "_step" + str(step) + ".vrt")
+            '''newxml = xml.format(**data)
+            f = open(folder + id + "_keep"+clr+"_step"+str(step)+".vrt", "w")
+            f.write(newxml)
+            f.close()'''
+
+        data = {"layername": id + "_keep_step" + str(step),
+                "fullname": folder + id + "_keep_step" + str(step) + ".csv", "easting": "lon", "northing": "lat",
+                "elevation": "raw_fruit_count"}
+        utils2.make_vrt(xml, data, folder + id + "_keep_raw_step" + str(step) + ".vrt")
+        '''newxml = xml.format(**data)
+        f = open(folder + id + "_keep_raw_step" + str(step) + ".vrt", "w")
+        f.write(newxml)
+        f.close()'''
+
+        data = {"layername": id + "_keep_step" + str(step),
+                "fullname": folder + id + "_keep_step" + str(step) + ".csv", "easting": "lon", "northing": "lat",
+                "elevation": "visible_fruit_per_m"}
+        utils2.make_vrt(xml, data, folder + id + "_keep_visible_step" + str(step) + ".vrt")
+        '''newxml = xml.format(**data)
+        f = open(folder + id + "_keep_visible_step" + str(step) + ".vrt", "w")
+        f.write(newxml)
+        f.close()'''
+
+        # interpolate
+        if interp == "invdist":
+            path = jsonpath + "/invdist.json"
+        if interp == "average":
+            path = jsonpath + "/average.json"
+
+        params = utils.json_io(path, direction="in")
+
+        params["-txe"] = str(minx) + " " + str(maxx)
+        params["-tye"] = str(miny) + " " + str(maxy)
+        params["-outsize"] = str(deltx * area_multiplier) + " " + str(delty * area_multiplier)
+        params["-a"]["radius1"] = str(0.5 * step)
+        params["-a"]["radius2"] = str(0.5 * step)
+
+        for clr in ["raw", "visible"]:
+
+            params["src_datasource"] = folder + id + "_keep_" + clr + "_step" + str(step) + ".vrt"
+            params["dst_filename"] = folder + id + "_" + clr + "_step" + str(step) + ".tiff"
+
+            print(params)
+            # build gdal_grid request
+            text = grd.build_gdal_grid_string(params, outtext=False)
+            print(text)
+            text = ["gdal_grid"] + text
+            print(text)
+
+            # call gdal_grid
+            print("Getting filtered raster by step " + str(step) + "for color " + clr)
+            out, err = utils.run_tool(text)
+            print("output" + out)
+            if err:
+                print("error:" + err)
+                raise Exception("gdal grid failed")
+
+        # upload to numpy
+        d = gdal.Open(folder + id + "_raw_step" + str(step) + ".tiff")
+        band = d.GetRasterBand(1)
+        # apply index
+        new_r_indexed_raw = gdalIO.apply_index_to_single_band(band,
+                                                              index)  # this is the last index from the fruit count
+        d = None
+
+        d = gdal.Open(folder + id + "_visible_step" + str(step) + ".tiff")
+        band = d.GetRasterBand(1)
+        # apply index
+        new_r_indexed_visible = gdalIO.apply_index_to_single_band(band,
+                                                                  index)  # this is the last index from the fruit count
+        d = None
+
+        # for clr in ["a"]:
+        for clr in ["a", "b", "c", "d"]:
+
+            params["src_datasource"] = folder + id + "_keep" + clr + "_step" + str(step) + ".vrt"
+            params["dst_filename"] = folder + id + "_" + clr + "_step" + str(step) + ".tiff"
+
+            # build gdal_grid request
+            text = grd.build_gdal_grid_string(params, outtext=False)
+            print(text)
+            text = ["gdal_grid"] + text
+            print(text)
+
+            # call gdal_grid
+            print("Getting filtered raster by step " + str(step) + "for color grade " + clr)
+            out, err = utils.run_tool(text)
+            print("output" + out)
+            if err:
+                print("error:" + err)
+                raise Exception("gdal grid failed")
+
+            # upload to numpy
+            d = gdal.Open(folder + id + "_" + clr + "_step" + str(step) + ".tiff")
+            band = d.GetRasterBand(1)
+            # apply index
+            new_r_indexed = gdalIO.apply_index_to_single_band(band,
+                                                              index)  # this is the last index from the fruit count
+            d = None
+
+            # calculate average, std, total area (here a pixel is 0.25 m2,
+            # totla area for pixel > 0, total area for pixels with 0 value
+
+            ####### get the indexed array for this colour grade
+
+            # d = gdal.Open(folder + id + "_" + clr + ".tiff")
+            # band = d.GetRasterBand(1)
+            # r_indexed = gdalIO.apply_index_to_single_band(band, index) # this is the last index from the fruit count
+            # d = None
+            index, r_indexed, properties = fileIO.load_object(folder + id + "_indexedarray_" + clr)
+
+            stats[step][clr] = {}
+
+            for i in np.unique(row_indexed):  # get the row numbers
+
+                area = math.pow(1 / area_multiplier, 2)
+
+                # add dictionary for this row
+                stats[step][clr][i] = {}
+
+                # get a mask for the current row
+                mask = row_indexed == i
+                # statistics for current row
+
+                # average, std, totalarea,total nonzero area, total zeroarea, total raw fruit count,
+                # average raw fruit count, std raw fruit count ,total visible fruitxm, average visible fruitXm, std visible fruitXm
+
+                # r_indexed is 2d , while new_r_indexed and mask are 1d
+                stats[step][clr][i]['truth'] = [r_indexed[0, :][mask].mean(), r_indexed[0, :][mask].std(),
+                                                r_indexed[0, :][mask].shape[0] * area,
+                                                np.count_nonzero(r_indexed[0, :][mask]) * area,
+                                                r_indexed[0, :][mask][r_indexed[0, :][mask] == 0].shape[0] * area,
+                                                r_indexed_raw[0, :][mask].sum(),
+                                                r_indexed_raw[0, :][mask].mean(),
+                                                r_indexed_raw[0, :][mask].std(),
+                                                r_indexed_visible[0, :][mask].sum(),
+                                                r_indexed_visible[0, :][mask].mean(),
+                                                r_indexed_visible[0, :][mask].std()]
+
+                '''
+                stats[step][clr][i]['truth'] = [r_indexed[mask].mean(), r_indexed[mask].std(),
+                                                r_indexed[mask].shape[0]*area, np.count_nonzero(r_indexed[mask])*area,
+                                                r_indexed[mask][r_indexed[mask] == 0].shape[0]*area,
+                                                r_indexed_raw[0,:][mask].sum(), r_indexed_raw[0,:][mask].mean(),r_indexed_raw[0,:][mask].std(),
+                                                r_indexed_visible[0,:][mask].sum(),r_indexed_visible[0,:][mask].mean()], r_indexed_visible[0,:][mask].std()]'''
+
+                stats[step][clr][i]['interpolated'] = [new_r_indexed[mask].mean(), new_r_indexed[mask].std(),
+                                                       new_r_indexed[mask].shape[0] * area,
+                                                       np.count_nonzero(new_r_indexed[mask]) * area,
+                                                       new_r_indexed[mask][new_r_indexed[mask] == 0].shape[0] * area,
+                                                       new_r_indexed_raw[mask].sum(),
+                                                       new_r_indexed_raw[mask].mean(),
+                                                       new_r_indexed_raw[mask].std(),
+                                                       new_r_indexed_visible[mask].sum(),
+                                                       new_r_indexed_visible[mask].mean(),
+                                                       new_r_indexed_visible[mask].std()]
+
+                # compare = r_indexed[0,:][mask] - new_r_indexed[mask]
+                # stats[clr][step][i]['comparison'] = [compare.mean(),compare.std()]
+                # pass
+                # calculate average and variance for this surface
+
+                # mean.append(compare.mean())
+                # std.append(compare.std())
+
+    # save as a boxplot
+
+    # print(mean)
+    # print(std)
+    return id, stats
+    # {2: {"a": {1: {'truth': {}, 'interpolated': {}}}}}
+
+
+
+
+
 def test_interpret_result(stats, id, folder):
     '''
     Interpret the dictionary with the results and save a table
@@ -1247,21 +1742,23 @@ def chart_rmse(folder,id):
     df = pd.read_csv(path)
 
     ncols = df.shape[1]
+    #the categorical labels for x axis (step2,step3,step4,....)
+    x_labels = [i.split("_")[0] for i in df.columns][:int(len(df.columns) / 2)]
 
     #make new chart directory if it does not exist
     if not os.path.exists(folder +"/charts"):
         os.mkdir(folder + "/charts")
 
     #chart ["stepx_delta_avg_rmse"]
-    output_file(folder + "/charts/delta_avg_rmse.html")
-    f = figure()
-    f.line(list(range(0,int(ncols/2))) , df.values[0,0:int(ncols/2)], line_width=2)
+    output_file(folder + "/charts/delta_avg_rmse.html",title="delta_avg_rmse")
+    f = figure(x_range=x_labels)
+    f.line(x_labels , df.values[0,0:int(ncols/2)], line_width=2)
     save(f)
 
     #chart ("stepx_delta_estimates_rmse")
-    output_file(folder + "/charts/delta_estimates_rmse.html")
-    f = figure()
-    f.line(list(range(int(ncols/2),ncols)) , df.values[0,int(ncols/2):], line_width=2)
+    output_file(folder + "/charts/delta_estimates_rmse.html",title="delta_estimates_rmse")
+    f = figure(x_range=x_labels)
+    f.line(x_labels , df.values[0,int(ncols/2):], line_width=2)
     save(f)
 
 

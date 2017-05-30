@@ -11,7 +11,7 @@
 #TODO: try...except is missing
 
 import pandas as pd
-
+import random
 
 def calculate_stat(df, nstd=1, colname=""):
     """
@@ -52,7 +52,6 @@ def calculate_stat_byrow(df,nstd=1, rowname=None, colname=None):
         stats.append({row : [mean, std, mn, mx]})
     return stats
 
-
 def set_field_value(df, value=None, colname=""):
     """
     Update the value for a pandas dataframe column
@@ -64,15 +63,21 @@ def set_field_value(df, value=None, colname=""):
     df[colname] = value
 
 
-def filter_bystep(df, step=1, rowname=None):
+def filter_bystep_old(df, step=2, rowname=None):
     """
     Reduce the number of points using a step
     Pass a column with the row name to filter by row
+
+    this function was replaced by filter_bystep() on 300517
+
     :param df: dataframe
     :param step: filter step
     :param rowname: column with row number
     :return: 2 dataframes, one for values to keep and another with values to discard
     """
+
+    if not isinstance(step, int) or  step < 2:
+        raise ValueError("step must be an integer >= 2")
 
     if rowname: # TODO: is this useful?
         keepframes = []
@@ -98,12 +103,88 @@ def filter_bystep(df, step=1, rowname=None):
         return pd.concat(keepframes),pd.concat(discardframes)
 
     else:
-        # get number of points for this row
+        # get number of points
         npoints = df.shape[0]
         # return df.iloc[range(0, npoints, step), :]
         keep = df[df.index.isin(range(0, npoints, step))]
         discard = df[~df.index.isin(range(0, npoints, step))]
         return keep, discard
+
+
+def filter_bystep(df, step=1, rand=False, first_last=False, rowname=None):
+    """
+    Reduce the number of points using a step, points are taken randomly for each vineyard row
+    Pass a column with the row name to filter by row
+    :param df: dataframe
+    :param step: filter step
+    :param rowname: column with vineyard row number, this is mandatory
+    :param first_last: True to always keep the first and last point of a vineyard row
+    :return: 2 dataframes, one for values to keep and another with values to discard
+    """
+
+    if not isinstance(step, int) or  step < 2:
+        raise ValueError("step must be an integer >= 2")
+
+    if first_last and not rowname:
+        raise ValueError("vineyard row must be defined when first_last is set to true")
+
+    #frames = []
+
+
+    if first_last:
+
+        keepframes = []
+        discardframes = []
+
+        # find unique row numbers
+        rows = df[rowname].unique()
+
+        for row in rows:
+            # select one vineyard row
+            fdf = df[df[rowname] == row]
+
+            # get number of points for this row
+            npoints = fdf.shape[0]
+
+            # subset the row with a step
+            #frames.append(fdf.iloc[range(0, npoints, step), :])
+
+            first = fdf.head(1)
+            last = fdf.tail(1)
+
+            if rand:
+                takes = sorted(random.sample(range(1, npoints-1), int(npoints/step)-2))
+                first.append([fdf[fdf.index.isin(takes)], last]) #merge dataframes
+                keepframes.append(first)
+                discardframes.append(fdf[~fdf.index.isin(takes)])
+
+            else:
+                # head+middle filteredpoints+tail
+                first.append([fdf[fdf.index.isin(range(step, npoints-1, step))], last])
+                keepframes.append(first)
+                #keepframes.append(fdf[fdf.index.isin(range(0, npoints, step))])
+                discardframes.append(fdf[~fdf.index.isin(range(step, npoints-1, step))])
+
+        # concatenate rows
+        return pd.concat(keepframes),pd.concat(discardframes)
+
+    else:
+        # get number of points
+        npoints = df.shape[0]
+        # return df.iloc[range(0, npoints, step), :]
+        if rand:
+
+            takes = sorted(random.sample(range(0, npoints), int(npoints / step)))
+            keep = df[df.index.isin(takes)]
+            # keepframes.append(fdf[fdf.index.isin(range(0, npoints, step))])
+            discard = df[~df.index.isin(takes)]
+        else:
+            keep = df[df.index.isin(range(0, npoints, step))]
+            discard = df[~df.index.isin(range(0, npoints, step))]
+
+        return keep, discard
+
+
 
 
 def filter_byvalue(df, value=0.8, operator=">=", colname=None,rowname=None ):

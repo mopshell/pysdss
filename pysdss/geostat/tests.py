@@ -28,12 +28,14 @@ def read_data(fname):
         return np.array(x3)
 
 
+
+#TODO here we get the nearest 10 points with iteration, we should use a spatial index approach instead
 def prepare_interpolation_data(point, data, n=10):
     """Get the nearest points to a point
     :param point: a point object
     :param data: a list of lists [[x,y,value],....]
     :param n: number of nearest points to the point x
-    :return: the n nearest points to point and the average value of data
+    :return: the n nearest points to point and the average value of data as a list
     """
     vals = [z[2] for z in data]
     mean = sum(vals)/len(vals)
@@ -159,18 +161,138 @@ if __name__ == "__main__":
         rsmes = [rmse(gamma[0], i(gamma[0])) for i in semivariograms]
         semivariogram = semivariograms[rsmes.index(min(rsmes))]
 
-        print("test point 337000, 4440911 ")
+        print("################test point 337000, 4440911 ")
         x = p.Point(337000, 4440911)
-        p1 = prepare_interpolation_data(x, data)[0]
-        print(kr.ordinary(np.array(p1), semivariogram)[0:2])
+        p1 = prepare_interpolation_data(x, data)
+        print("ordinary kriging")
+        print(kr.ordinary(np.array(p1[0]), semivariogram)[0:2])
+        print("simple kriging")
+        print(kr.simple(np.array(p1[0]), p1[1], semivariogram)[0:2])
 
-        print("test a point from the original data")
+        print("################test a point from the original data")
         x = p.Point(data[1, 0], data[1, 1])
-        p1 = prepare_interpolation_data(x, data)[0]
-        print(kr.ordinary(np.array(p1), semivariogram)[0:2])
+        p1 = prepare_interpolation_data(x, data)
+        print("ordinary kriging")
+        print(kr.ordinary(np.array(p1[0]), semivariogram)[0:2])
+        print("simple kriging")
+        print(kr.simple(np.array(p1[0]), p1[1], semivariogram)[0:2])
 
-    test_ordinaryk()
+    #test_ordinaryk()
 
+
+    def interpolate_surface():
+
+
+        import numpy as np
+        import variance as vrc
+        import fit
+        import test_data.point as p
+        import kriging as kr
+
+        from bokeh.plotting import figure
+        from bokeh.io import output_file, save
+
+        data = read_data("./test_data/necoldem.dat")
+
+        print("calculte empirical semivariance")
+        hh = 50
+        lags = range(0, 3000, hh)
+        gamma = vrc.semivar(data, lags, hh)
+        #covariance = vrc.covar(data, lags, hh)
+
+        print("fit semivariogram")
+        # choose the model with lowest rmse
+        semivariograms=[]
+        semivariograms.append(fit.fitsemivariogram(data, gamma, fit.spherical))
+        semivariograms.append(fit.fitsemivariogram(data, gamma, fit.linear))
+        semivariograms.append(fit.fitsemivariogram(data, gamma, fit.gaussian))
+        semivariograms.append(fit.fitsemivariogram(data, gamma, fit.exponential))
+        rsmes = [rmse(gamma[0], i(gamma[0])) for i in semivariograms]
+        semivariogram = semivariograms[rsmes.index(min(rsmes))]
+
+
+        # define surface properties
+        x0,x1 = data[:,0].min(),data[:,0].max()
+        y0,y1 = data[:,1].min(),data[:,1].max()
+
+        dx,dy = x1-x0, y1-y0
+
+        dsize =min(dx/100.0, dy/100.0)
+
+        nx = int(np.ceil(dx/dsize))
+        ny = int(np.ceil(dy/dsize))
+
+
+        # initialize empty arrays to store interpolated surfaces and errors
+
+        surface_ordinary = np.zeros((nx,ny))
+        error_ordinary = np.zeros((nx,ny))
+        surface_simple = np.zeros((nx,ny))
+        error_simple = np.zeros((nx,ny))
+
+
+        print("Executing simple and ordinary kriging, this will take some time")
+        # execute kriging for each surface cell
+        for i in range(nx):
+            for j in range(ny):
+
+                x = p.Point(x0+i*dsize, y0+j*dsize)
+                new_data, mu = prepare_interpolation_data(x,data)    #### TODO: this should use spatial indexing
+
+                ordinary = kr.ordinary(np.array(new_data), semivariogram)
+                surface_ordinary[i,j] = ordinary[0]
+                error_ordinary[i,j] = ordinary[1]
+
+                simple = kr.simple(np.array(new_data), mu, semivariogram)
+                surface_simple[i,j] = simple[0]
+                error_simple[i,j] = simple[1]
+
+
+        # save arrays to disk, array are transposed to have the correct x,y coordimates
+        np.savez("./test_data/surfaces.npz",surface_ordinary=surface_ordinary.T, error_ordinary=error_ordinary.T,
+                 surface_simple=surface_simple.T, error_simple=error_simple.T, surface_difference= surface_ordinary-surface_simple)
+
+
+    def plot_surfaces():
+
+        import numpy as np
+        from bokeh.plotting import figure
+        from bokeh.io import output_file, save
+        from bokeh.models import LinearColorMapper, ColorBar
+        import pandas as pd
+
+        print("plotting surfaces")
+        outs = ["surface_ordinary","error_ordinary","surface_simple","error_simple", "surface_difference"]
+        surfaces = np.load("./test_data/surfaces.npz")
+        surface_ordinary = surfaces["surface_ordinary"]
+        error_ordinary = surfaces["error_ordinary"]
+        surface_simple = surfaces["surface_simple"]
+        error_simple = surfaces["error_simple"]
+        surface_difference = surfaces["surface_difference"]
+
+        df = pd.read_csv("./test_data/necoldem.dat", header=None, sep=" ")
+
+        xmin = df.values[:,0].min()
+        ymin = df.values[:,1].min()
+
+        dx = df.values[:, 0].max() - df.values[:, 0].min()
+        dy = df.values[:, 1].max() - df.values[:, 1].min()
+
+        for i in outs:
+            output_file("./test_data/necoldem_"+ i+ ".html", title="necoldem_"+ i)
+            f = figure()
+
+            color_mapper = LinearColorMapper(palette="Viridis256", low=eval(i).min(), high=eval(i).max())
+
+            f.image(image=[eval(i)], x=xmin, y=ymin, dw=dx, dh=dy, palette="Viridis256")
+            f.circle(df.values[:,0], df.values[:,1], fill_color=None, line_color="blue")
+            color_bar = ColorBar(color_mapper=color_mapper , location=(0, 0))
+            f.add_layout(color_bar, 'left')
+            save(f)
+
+
+    #interpolate_surface()
+    plot_surfaces()
 
 
 

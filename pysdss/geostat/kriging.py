@@ -9,6 +9,9 @@
 # Updated:     29/05/2017
 #-------------------------------------------------------------------------------
 
+#TODO cythonize this code!
+
+
 
 import numpy as np
 import variance
