@@ -14,6 +14,91 @@ def interpolate():
     raise NotImplementedError
 
 
+
+def build_gdal_warp_string(params, outtext=True ,debug=False):
+    """
+    Build the strig for gdal_warp from a dictionary
+    Output single string ot a list of strings
+    http://www.gdal.org/gdalwarp.html
+
+    :param params: a dictionary, leave value empty to skip the key, for "-q" you can pass anything
+
+    params = {
+          "-s_srs":"EPSG:32611",
+          "-t_srs":"EPSG:32611",
+          "-to":"",
+          "-novshiftgrid":"",
+          "-order":"",
+          "-tps":"",
+          "-rpc":"",
+          "-geoloc":"",
+          "-et":"",
+          "-refine_gcps tolerance":"",
+          "-te":"",
+          "-te_srs":"",
+          "-tr":"",
+          "-tap":"",
+          "-ts":"",
+          "-ovr":"",
+          "-wo":"",
+          "-ot":"Float32",
+          "-wt":"Float32",
+          "-srcnodata":"",
+          "-dstnodata":"",
+          "-srcalpha":"",
+          "-nosrcalpha":"",
+          "-dstalpha":"",
+          "-r":"average",
+          "-wm":"",
+          "-multi":"",
+          "-q":"",
+          "-cutline":"",
+          "-cl":"",
+          "-cwhere":"",
+          "-csql":"",
+          "-cblend":"",
+          "-crop_to_cutline":"",
+          "-of":"GTiff",
+          "-co":"",
+          "-overwrite":"",
+          "-nomd":"",
+          "-cvmd":"",
+          "-setci":"",
+          "-oo":"",
+          "-doo":"",
+          "srcfile":"",
+          "dstfile":""
+    }
+
+    :param outtext: True to return a string, otherwhise return a list
+    :param debug: True to print the string on screen
+    :return: a string or list with parameters
+    """
+
+
+    #TODO this is just for the basic keys to allow  mosaic
+
+    text=""
+    for i in params:
+        if params[i]:
+            if i not in ["-q", "src_datasource","dst_filename"]:
+                text+= i + " " + params[i] + " "
+
+    #put some parameters at the end
+    if params["-q"]: text+="-q "
+
+    if params["src_datasource"]: text += params["src_datasource"] + " "
+    if params["dst_filename"]: text += params["dst_filename"]
+
+    if debug:
+        print(text)
+
+    if outtext:
+        return text
+    else:
+        return text.split(" ")
+
+
 def build_gdal_grid_string(params, outtext=True ,debug=False):
     """
     Build the strig for gdal_grid from a dictionary

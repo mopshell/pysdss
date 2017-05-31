@@ -114,7 +114,16 @@ def filter_bystep_old(df, step=2, rowname=None):
 def filter_bystep(df, step=1, rand=False, first_last=False, rowname=None):
     """
     Reduce the number of points using a step, points are taken randomly for each vineyard row
-    Pass a column with the row name to filter by row
+    Pass a column with the row name to filter by row (this is mandatory if first_last is True)
+
+
+    4 possible combinations:
+    nonrandom + firstlast
+    random + firstlast
+    nonrandom + non firstlast   #here  firstlast may be present sometimes
+    random + nonfirstlast       #here  firstlast may be present sometimes
+
+
     :param df: dataframe
     :param step: filter step
     :param rowname: column with vineyard row number, this is mandatory
@@ -153,38 +162,46 @@ def filter_bystep(df, step=1, rand=False, first_last=False, rowname=None):
             last = fdf.tail(1)
 
             if rand:
-                takes = sorted(random.sample(range(1, npoints-1), int(npoints/step)-2))
-                first.append([fdf[fdf.index.isin(takes)], last]) #merge dataframes
-                keepframes.append(first)
+                #this does not work because of the indexes
+                #takes = sorted(random.sample(range(1, npoints-1), int(npoints/step)-2))
+
+                #we need to consider the indexes of these subdataframe keeps the original value
+                takes = sorted(random.sample(range(fdf.index[1], fdf.index[-1]), int(npoints / step) - 2))
+                keepframes.append(pd.concat([first, fdf[fdf.index.isin(takes)], last]))#merge dataframes
                 discardframes.append(fdf[~fdf.index.isin(takes)])
 
             else:
                 # head+middle filteredpoints+tail
-                first.append([fdf[fdf.index.isin(range(step, npoints-1, step))], last])
-                keepframes.append(first)
-                #keepframes.append(fdf[fdf.index.isin(range(0, npoints, step))])
-                discardframes.append(fdf[~fdf.index.isin(range(step, npoints-1, step))])
+                #keepframes.append(pd.concat([first, fdf[fdf.index.isin(range(step, npoints-1, step))], last]))
+                #discardframes.append(fdf[~fdf.index.isin(range(step, npoints-1, step))])
+
+                # we need to consider the indexes of these subdataframe keep the original value
+                keepframes.append(pd.concat([first, fdf[fdf.index.isin(range(fdf.index[step], fdf.index[-1], step))], last]))
+                discardframes.append(fdf[~fdf.index.isin(range(fdf.index[step], fdf.index[-1], step))])
 
         # concatenate rows
         return pd.concat(keepframes),pd.concat(discardframes)
 
     else:
+
+        #here we consider the entire dataframe so the first/last point of a row may or may not be kept
+
         # get number of points
         npoints = df.shape[0]
-        # return df.iloc[range(0, npoints, step), :]
+
         if rand:
 
-            takes = sorted(random.sample(range(0, npoints), int(npoints / step)))
+            #takes = sorted(random.sample(range(0, npoints), int(npoints / step)))
+            takes = sorted(random.sample(range(df.index[0], df.index[-1]+1), int(npoints / step)))
             keep = df[df.index.isin(takes)]
-            # keepframes.append(fdf[fdf.index.isin(range(0, npoints, step))])
             discard = df[~df.index.isin(takes)]
         else:
-            keep = df[df.index.isin(range(0, npoints, step))]
-            discard = df[~df.index.isin(range(0, npoints, step))]
+            #keep = df[df.index.isin(range(0, npoints, step))]
+            #discard = df[~df.index.isin(range(0, npoints, step))]
+            keep = df[df.index.isin(range(df.index[0], df.index[-1]+1, step))]
+            discard = df[~df.index.isin(range(df.index[0], df.index[-1]+1, step))]
 
         return keep, discard
-
-
 
 
 def filter_byvalue(df, value=0.8, operator=">=", colname=None,rowname=None ):

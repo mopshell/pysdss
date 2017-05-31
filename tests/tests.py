@@ -407,13 +407,19 @@ if __name__ == "__main__":
         df.columns = df.columns.str.strip()
         df.columns = df.columns.str.lower()
 
-        for i in [2, 3, 4, 5, 6, 7, 8, 9, 10]:
+        #for i in [2, 3, 4, 5, 6, 7, 8, 9, 10]:
+        for i in [10, 30, 50]:
             # calculate statistics by row
 
             print("step "+str(i))
+
             keep, delete = filter.filter_bystep(df, step=i, rand = False, first_last = False, rowname = None)
             keep.to_csv(folder + id + "/NOrandom_NOfirstlast_step"+str(i)+"_keep.csv")
             delete.to_csv(folder + id + "/NOrandom_NOfirstlast_step"+str(i)+"_delete.csv")
+
+            keep, delete = filter.filter_bystep(df, step=i, rand = False, first_last = True, rowname = "row")
+            keep.to_csv(folder + id + "/NOrandom_firstlast_step"+str(i)+"_keep.csv")
+            delete.to_csv(folder + id + "/NOrandom_firstlast_step"+str(i)+"_delete.csv")
 
             keep, delete = filter.filter_bystep(df, step=i, rand=True, first_last=False, rowname=None)
             keep.to_csv(folder + id + "/random_NOfirstlast_step"+str(i)+"_keep.csv")
@@ -423,13 +429,14 @@ if __name__ == "__main__":
             keep.to_csv(folder + id + "/random_firstlast_step" + str(i) + "_keep.csv")
             delete.to_csv(folder + id + "/random_firstlast_step"+str(i)+"_delete.csv")
 
+
         try:
             keep, delete = filter.filter_bystep(df, step=i, rand=True, first_last=True, rowname=None)
         except ValueError as e:
             print("test passed for first_last and no row name "+ str(e))
 
 
-    tests_filter_by_step()
+    #tests_filter_by_step()
 
 
 ############old workflow 2###############

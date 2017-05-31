@@ -1,0 +1,8 @@
+<OGRVRTDataSource>
+	<OGRVRTLayer name="{layername}">
+		<SrcDataSource>{fullname}</SrcDataSource>
+		<GeometryType>wkbPoint</GeometryType>
+		<GeometryField encoding="PointFromColumns" x="{easting}" y="{northing}" z="{elevation}"/>
+		<Field name="{rowname}" type="Real" src="{rowname}" />
+	</OGRVRTLayer>
+</OGRVRTDataSource>

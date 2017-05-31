@@ -129,7 +129,9 @@ def remove_duplicates(df, cols, operation=None):
         c= df.columns #store the original column order
         return df.groupby(cols,as_index=False, sort=False).mean()[c] #apply average to grops and return the original column order
 
+    #TODO how do i do the sum without changing the vineyard row number?
     elif operation == "sum":
+        raise NotImplementedError("the sum will change the row number, therefore the parameter is not allowed")
         c= df.columns #store the original column order
         return df.groupby(cols,as_index=False, sort=False).sum()[c] #apply average to grops and return the original column order
 
@@ -185,7 +187,7 @@ def duplicated(list values, take_last=False):
 '''
 
 
-def average_point_distance(file, xfield, yfield, row, direction="x", remove_duplicates = True):
+def average_point_distance(file, xfield, yfield, row, direction="x", rem_duplicates = False, operation="mean"):
     """
     Calculate the average distance between points 
     The file must have the vineyard rows
@@ -209,8 +211,8 @@ def average_point_distance(file, xfield, yfield, row, direction="x", remove_dupl
         raise TypeError('pass a csv or a pandas dataframe')
 
     #2 delete duplicate points to avoid distances equals to zero
-    if remove_duplicates:
-        file = remove_duplicates(file, [yfield, xfield])
+    if rem_duplicates:
+        file = remove_duplicates(file, [yfield, xfield],operation=operation)
 
     #3 initialize an empty array with 4 columns (row, coordinates, shifted coordinates, distance)
     arr = np.zeros((file.shape[0],4))
@@ -241,6 +243,106 @@ def average_point_distance(file, xfield, yfield, row, direction="x", remove_dupl
     # finally return an average for all the rows
     # print(means)
     return statistics.mean(means)
+
+
+def max_point_distance(file, xfield, yfield, row, direction="x",  rem_duplicates = False, operation="mean"):
+    """
+    Calculate the max distance between points
+    The file must have the vineyard rows
+
+    :param file: path to csv or pandas dataframe
+    It's up to the user to pass a file with the three important fields (x,y,row)
+    :param xfield: field name for x coordinates
+    :param yfield: field name for y coordinates
+    :param row: field name for rows
+    :param direction: direction of the vineyard rows ( "x" other values are considered "y" )
+    :param delete_duplicates: delete duplicate points
+    :return:  the max distance
+    """
+
+    # 1 open the csv file to pandas
+    if type(file) == str:
+        file = pd.read_csv(file, usecols=[xfield, yfield, row])
+    elif type(file) == pd.core.frame.DataFrame:
+        pass
+    else:
+        raise TypeError('pass a csv or a pandas dataframe')
+
+    # 2 delete duplicate points to avoid distances equals to zero
+    if rem_duplicates:
+        file = remove_duplicates(file, [yfield, xfield], operation=operation)
+
+    # 3 initialize an empty array with 4 columns (row, coordinates, shifted coordinates, distance)
+    arr = np.zeros((file.shape[0], 4))
+
+    # first column with the rows
+    arr[:, 0] = file[row].values
+    # second column with the x/y coordinates
+    if direction == "x":  # extract the x coordinates
+        arr[:, 1] = file[xfield].values
+    else:  # extract the y coordinates
+        arr[:, 1] = file[yfield].values
+
+    # third column with the shifted coordinates
+    # copy the shifted by -1 coordinates to the third column
+    arr[:-1, 2] = arr[1:, 1]
+
+    # fourth column with the differences
+    # calculate the absolute difference of the coordinates and put in a column
+    arr[:, 3] = np.abs(arr[:, 1] - arr[:, 2])
+
+    # clacualte max for each row and then highest max
+    maxim = []
+    rows = np.unique(arr[:, 0])  # get unique rows
+    for x in rows:
+        r = np.where(arr[:, 0] == x)  # get the indexes for this row
+        # skip the last point becuse contains distances between point on different rows, coloumn 4 has the average values
+        maxim.append(np.max(arr[r][:-1, 3]))
+    # finally return the highest for all the rows
+    return max(maxim)
+
+
+def max_point_distance_byrow(pdf, xfield, yfield, direction="x", rem_duplicates = False, operation="mean"):
+    """
+    Calculate the max distance between points
+    The file must have the vineyard rows
+
+    :param pdf: pandas dataframe
+    It's up to the user to pass a dataframe with the 2 fields (x,y)
+    :param xfield: field name for x coordinates
+    :param yfield: field name for y coordinates
+    :param direction: direction of the vineyard rows ( "x" other values are considered "y" )
+    :param delete_duplicates: delete duplicate points
+    :return:  the max distance
+    """
+
+    # 1 open the csv file to pandas
+    if type(pdf) != pd.core.frame.DataFrame:
+        raise TypeError('pass a csv or a pandas dataframe')
+
+    # 2 delete duplicate points to avoid distances equals to zero
+    if remove_duplicates:
+        pdf = rem_duplicates(pdf, [yfield, xfield], operation=operation)
+
+    # 3 initialize an empty array with 3 columns (coordinates, shifted coordinates, distance)
+    arr = np.zeros((pdf.shape[0], 3))
+
+    # first column with the x/y coordinates
+    if direction == "x":  # extract the x coordinates
+        arr[:, 0] = pdf[xfield].values
+    else:  # extract the y coordinates
+        arr[:, 0] = pdf[yfield].values
+
+    # second column with the shifted coordinates
+    # copy the shifted by -1 coordinates to the second column
+    arr[:-1, 1] = arr[1:, 0]
+
+    # third column with the differences
+    # calculate the absolute difference of the coordinates and put in a column
+    arr[:, 2] = np.abs(arr[:, 0] - arr[:, 1])
+
+    # return max distance for the current row, skip the last element which is zero
+    return np.max(arr[:-1, 2])
 
 
 def row_length(file, xfield, yfield, row, conversion_factor=1):
@@ -498,6 +600,7 @@ if __name__ == "__main__":
         outfolder = folder + id + "/"
 
         file = "/vagrant/code/pysdss/data/input/2016_06_17_samplemedium.csv"
+        file = "/vagrant/code/pysdss/data/input/2016_06_17.csv"
         file = shutil.copy(file, outfolder + "/" + id + "_keep.csv")  # copy to the directory
 
         # 5 set data properties: correct field names if necessary
@@ -511,11 +614,12 @@ if __name__ == "__main__":
         df = remove_duplicates(file, [" Latitude", " Longitude"], operation="mean")
         #df = remove_duplicates(file, [" Longitude"," Latitude" ], operation="mean")
         df.to_csv(file+"_mean.csv", index=False)
-        df = remove_duplicates(file, [" Latitude", " Longitude"], operation="sum")
-        df.to_csv(file+"_sum.csv", index=False)
+        #TODO why sum sums the row numbers while average do not average the number???
+        #df = remove_duplicates(file, [" Latitude", " Longitude"], operation="sum")
+        #df.to_csv(file+"_sum.csv", index=False)
         df = remove_duplicates(file, [" Latitude", " Longitude"], operation="tail")
         df.to_csv(file+"_tail.csv", index=False)
         df = remove_duplicates(file, [" Latitude", " Longitude"])
         df.to_csv(file+"_head.csv", index=False)
 
-    #test_remove_duplicates()
+    test_remove_duplicates()

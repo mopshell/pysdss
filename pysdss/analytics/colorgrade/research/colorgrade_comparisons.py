@@ -916,11 +916,16 @@ def berrycolor_workflow_1_original(steps=[2,3,4], interp="invdist"):
 ##add parameter to force inteerpolation for points in the same row only (for higher filters the interpolation radius will
 ##overlap with points belonging to adjacent rows
 
-#so there are 4 possibilities for each interpolation method (so far inverse distance and moving average, kriging will follow)
-# ordered filter, free interpolation
-# ordered filter, interpolation by row only
-# random filter, free interpolation
-# random filter, interpolation by row only
+#so there are 8 possibilities for each interpolation method (so far inverse distance and moving average, kriging will follow)
+# ordered filter, first/last, free interpolation
+# ordered filter, no first/last, free interpolation
+# ordered filter, first/last, interpolation by row only
+# ordered filter, no first/last, interpolation by row only
+# random filter, first/last, free interpolation
+# random filter, no first/last, free interpolation
+# random filter, first/last, interpolation by row only
+# random filter, no first/last, interpolation by row only
+
 
 #for random filter the radius is calculated with the max distance between points on the same row
 
@@ -937,7 +942,7 @@ def berrycolor_workflow_1_original(steps=[2,3,4], interp="invdist"):
 #   radius4  x       x       x      ...
 
 
-def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False, force_interpolation_by_row=False):
+def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False, first_last=False, force_interpolation_by_row=False, rowdirection="x"):
     """
     similar to interpolate_and_filter but here as input i am using the original csv file and I am considering the
     number of berries as well
@@ -946,6 +951,7 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
     interp: the interpolation method to use on the filtered data   "invdist" or "average", kriging will be added later
     random filter:   true to take random points (e,g step2 takes 50% random points for each row, false use ordered filter
     (e.g. step2 takes 1 point every 2 points)
+    first_last: true to always have the first and last point of a vineyard row
     force_interpolation : true if i want to be sure the points belong to the current row only
     :return:
     """
@@ -984,7 +990,7 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
     # here should be necessary some mapping to get the column names
 
 
-    # 2 filter data and save to disk . this is the "truth" so we just delete the zeros
+    # 2 filter data (and save to disk .
     # 1/03/17  we don't filter
     # keep, discard = filter.filter_byvalue(df, 0, ">", colname="d")
     keep = df
@@ -998,6 +1004,13 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
     filter.set_field_value(keep, 0, "keepb")
     filter.set_field_value(keep, 0, "keepc")
     filter.set_field_value(keep, 0, "keepd")
+
+
+    ##############search and remove duplicates
+    #TODO check that this will not alter the vineyard row to an average number
+    keep = utils.remove_duplicates(keep, ["lat", "long"], operation="mean")
+    ########################################
+
     keep.to_csv(folder + id + "_keep.csv", index=False)
 
     '''west,north =utils.reproject_coordinates(discard, "epsg:32611", "lon", "lat", False)
@@ -1191,207 +1204,344 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
     index_visible, r_indexed_visible, properties_visible = fileIO.load_object(
         folder + id + "_indexedarray_visiblefruit")
 
-    # define new rasters increasing the data filtering and interpolating TODO: create configuration files for automation
-    for step in steps:
+    if force_interpolation_by_row:
 
-        # add dictionary for this step
-        stats[step] = {}
+        # define new rasters increasing the data filtering and interpolating TODO: create configuration files for automation
+        for step in steps:
+            # add dictionary for this step
+            stats[step] = {}
+            # filter data by step
+            k, d = filter.filter_bystep(keep, step=step, rand=random_filter, first_last=first_last,rowname="row")
+            k.to_csv(folder + id + "_keep_step" + str(step) + ".csv", index=False)
+            d.to_csv(folder + id + "_discard_step" + str(step) + ".csv", index=False)
 
-        # filter data by step
-        k, d = filter.filter_bystep(keep, step=step)
 
-        '''
-        i already projected before
-        west, north = utils.reproject_coordinates(k, "epsg:32611", "lon", "lat", False)
-        filter.set_field_value(k, west, "lon")
-        filter.set_field_value(k, north, "lat")
-        filter.set_field_value(k, 0, "keepa")
-        filter.set_field_value(k, 0, "keepb")
-        filter.set_field_value(k, 0, "keepc")
-        filter.set_field_value(k, 0, "keepd")'''
-        k.to_csv(folder + id + "_keep_step" + str(step) + ".csv", index=False)
 
-        '''west, north = utils.reproject_coordinates(d, "epsg:32611", "lon", "lat", False)
-        filter.set_field_value(d, west, "lon")
-        filter.set_field_value(d, north, "lat")
-        filter.set_field_value(d, 0, "keepa")
-        filter.set_field_value(d, 0, "keepb")
-        filter.set_field_value(d, 0, "keepc")
-        filter.set_field_value(d, 0, "keepd")'''
-        d.to_csv(folder + id + "_discard_step" + str(step) + ".csv", index=False)
+            #load xml with columns
+            with open(jsonpath + "/vrtmodel_row.txt") as f:
+                xml_row = f.read()
 
-        # for clr in ["a"]:
-        for clr in ["a", "b", "c", "d"]:
+            # for clr in ["a"]:
+            for clr in ["a", "b", "c", "d"]:
+                data = {"layername": id + "_keep_step" + str(step),
+                        "fullname": folder + id + "_keep_step" + str(step) + ".csv", "easting": "lon",
+                        "northing": "lat",
+                        "elevation": clr, "rowname": "row"}
+                utils2.make_vrt(xml_row, data, folder + id + "_keep" + clr + "_step" + str(step) + ".vrt")
+
+
             data = {"layername": id + "_keep_step" + str(step),
                     "fullname": folder + id + "_keep_step" + str(step) + ".csv", "easting": "lon", "northing": "lat",
-                    "elevation": clr}
-            utils2.make_vrt(xml, data, folder + id + "_keep" + clr + "_step" + str(step) + ".vrt")
+                    "elevation": "raw_fruit_count", "rowname": "row"}
+            utils2.make_vrt(xml_row, data, folder + id + "_keep_raw_step" + str(step) + ".vrt")
+
+
+            data = {"layername": id + "_keep_step" + str(step),
+                    "fullname": folder + id + "_keep_step" + str(step) + ".csv", "easting": "lon", "northing": "lat",
+                    "elevation": "visible_fruit_per_m", "rowname": "row"}
+            utils2.make_vrt(xml_row, data, folder + id + "_keep_visible_step" + str(step) + ".vrt")
+
+            ## make temporary directory to store the interpolated vineyard rows
+            #################################################
+            tempfolder = folder + "/temprasters/"
+            os.mkdir(tempfolder)
+
+            # prepare interpolation parameters
+            if interp == "invdist":
+                path = jsonpath + "/invdist.json"
+            if interp == "average":
+                path = jsonpath + "/average.json"
+
+            params = utils.json_io(path, direction="in")
+
+            params["-txe"] = str(minx) + " " + str(maxx)
+            params["-tye"] = str(miny) + " " + str(maxy)
+            params["-outsize"] = str(deltx * area_multiplier) + " " + str(delty * area_multiplier)
+
+
+            for clr in ["raw", "visible"]:
+
+                #for each row if random calculate the max distance for the current row
+                #execute gdalgrid for jus the row points
+                #execute gdalwarp to merge all the rasters
+                #delete the temporary folder (maybe this after the colorgrade interpolation
+
+                # find unique row numbers
+                rows = k["row"].unique()
+
+                for row in rows:
+                    # select one vineyard row
+                    rowdf = k[k["row"] == int(row)]
+
+                    # if random_filter we will set the radius to the max distance between points in a row
+                    if random_filter: max_point_distance = utils.max_point_distance(rowdf, "lon", "lat", "row",
+                                                                                    direction=rowdirection,
+                                                                                    rem_duplicates=False)
+
+                    if random_filter:  # if we have random points we set we set the radius to the max distance between points plus a buffer of 0.5
+                        params["-a"]["radius1"] = str(max_point_distance + 0.5)
+                        params["-a"]["radius2"] = str(max_point_distance + 0.5)
+                    else:
+                        params["-a"]["radius1"] = str(0.5 * step)
+                        params["-a"]["radius2"] = str(0.5 * step)
+
+                    params["-where"] = "row="+ str(int(row))
+
+                    params["src_datasource"] = folder + id + "_keep_" + clr + "_step" + str(step) + ".vrt"
+                    params["dst_filename"] = tempfolder + id + "_" + clr + "_step" + str(step) + "row_"+str(row)+".tiff"
+
+                    print(params)
+
+                    # build gdal_grid request
+                    text = grd.build_gdal_grid_string(params, outtext=False)
+                    print(text)
+                    text = ["gdal_grid"] + text
+                    print(text)
+
+                    # call gdal_grid
+                    print("Getting filtered raster by step " + str(step) + "for field " + clr +" and row" + str(row))
+                    out, err = utils.run_tool(text)
+                    print("output" + out)
+                    if err:
+                        print("error:" + err)
+                        raise Exception("gdal grid failed")
+
+
+            ###merge the rasters
+
+
+
+
+            # upload to numpy
+            d = gdal.Open(folder + id + "_raw_step" + str(step) + ".tiff")
+            band = d.GetRasterBand(1)
+            # apply index
+            new_r_indexed_raw = gdalIO.apply_index_to_single_band(band,
+                                                                  index)  # this is the last index from the fruit count
+            d = None
+
+            d = gdal.Open(folder + id + "_visible_step" + str(step) + ".tiff")
+            band = d.GetRasterBand(1)
+            # apply index
+            new_r_indexed_visible = gdalIO.apply_index_to_single_band(band,
+                                                                      index)  # this is the last index from the fruit count
+            d = None
+
+
+
+            # iterate the vineyard rows for each
+            ## if random calculate the max distance between points to set the interpolation radius
+
+
+    else: # no force interpolation by row
+
+        # define new rasters increasing the data filtering and interpolating TODO: create configuration files for automation
+        for step in steps:
+            # add dictionary for this step
+            stats[step] = {}
+
+            # filter data by step
+            k, d = filter.filter_bystep(keep, step=step, rand=random_filter, first_last=first_last,rowname="row")
+            # if random_filter we will set the radius to the max distance between points in a row
+            if random_filter: max_point_distance = utils.max_point_distance(k, "lon", "lat", "row", direction=rowdirection)
+
+            '''
+            i already projected before
+            west, north = utils.reproject_coordinates(k, "epsg:32611", "lon", "lat", False)
+            filter.set_field_value(k, west, "lon")
+            filter.set_field_value(k, north, "lat")
+            filter.set_field_value(k, 0, "keepa")
+            filter.set_field_value(k, 0, "keepb")
+            filter.set_field_value(k, 0, "keepc")
+            filter.set_field_value(k, 0, "keepd")'''
+            k.to_csv(folder + id + "_keep_step" + str(step) + ".csv", index=False)
+
+            '''west, north = utils.reproject_coordinates(d, "epsg:32611", "lon", "lat", False)
+            filter.set_field_value(d, west, "lon")
+            filter.set_field_value(d, north, "lat")
+            filter.set_field_value(d, 0, "keepa")
+            filter.set_field_value(d, 0, "keepb")
+            filter.set_field_value(d, 0, "keepc")
+            filter.set_field_value(d, 0, "keepd")'''
+            d.to_csv(folder + id + "_discard_step" + str(step) + ".csv", index=False)
+
+            # for clr in ["a"]:
+            for clr in ["a", "b", "c", "d"]:
+                data = {"layername": id + "_keep_step" + str(step),
+                        "fullname": folder + id + "_keep_step" + str(step) + ".csv", "easting": "lon", "northing": "lat",
+                        "elevation": clr}
+                utils2.make_vrt(xml, data, folder + id + "_keep" + clr + "_step" + str(step) + ".vrt")
+                '''newxml = xml.format(**data)
+                f = open(folder + id + "_keep"+clr+"_step"+str(step)+".vrt", "w")
+                f.write(newxml)
+                f.close()'''
+
+            data = {"layername": id + "_keep_step" + str(step),
+                    "fullname": folder + id + "_keep_step" + str(step) + ".csv", "easting": "lon", "northing": "lat",
+                    "elevation": "raw_fruit_count"}
+            utils2.make_vrt(xml, data, folder + id + "_keep_raw_step" + str(step) + ".vrt")
             '''newxml = xml.format(**data)
-            f = open(folder + id + "_keep"+clr+"_step"+str(step)+".vrt", "w")
+            f = open(folder + id + "_keep_raw_step" + str(step) + ".vrt", "w")
             f.write(newxml)
             f.close()'''
 
-        data = {"layername": id + "_keep_step" + str(step),
-                "fullname": folder + id + "_keep_step" + str(step) + ".csv", "easting": "lon", "northing": "lat",
-                "elevation": "raw_fruit_count"}
-        utils2.make_vrt(xml, data, folder + id + "_keep_raw_step" + str(step) + ".vrt")
-        '''newxml = xml.format(**data)
-        f = open(folder + id + "_keep_raw_step" + str(step) + ".vrt", "w")
-        f.write(newxml)
-        f.close()'''
+            data = {"layername": id + "_keep_step" + str(step),
+                    "fullname": folder + id + "_keep_step" + str(step) + ".csv", "easting": "lon", "northing": "lat",
+                    "elevation": "visible_fruit_per_m"}
+            utils2.make_vrt(xml, data, folder + id + "_keep_visible_step" + str(step) + ".vrt")
+            '''newxml = xml.format(**data)
+            f = open(folder + id + "_keep_visible_step" + str(step) + ".vrt", "w")
+            f.write(newxml)
+            f.close()'''
 
-        data = {"layername": id + "_keep_step" + str(step),
-                "fullname": folder + id + "_keep_step" + str(step) + ".csv", "easting": "lon", "northing": "lat",
-                "elevation": "visible_fruit_per_m"}
-        utils2.make_vrt(xml, data, folder + id + "_keep_visible_step" + str(step) + ".vrt")
-        '''newxml = xml.format(**data)
-        f = open(folder + id + "_keep_visible_step" + str(step) + ".vrt", "w")
-        f.write(newxml)
-        f.close()'''
+            # interpolate
+            if interp == "invdist":
+                path = jsonpath + "/invdist.json"
+            if interp == "average":
+                path = jsonpath + "/average.json"
 
-        # interpolate
-        if interp == "invdist":
-            path = jsonpath + "/invdist.json"
-        if interp == "average":
-            path = jsonpath + "/average.json"
+            params = utils.json_io(path, direction="in")
 
-        params = utils.json_io(path, direction="in")
+            params["-txe"] = str(minx) + " " + str(maxx)
+            params["-tye"] = str(miny) + " " + str(maxy)
+            params["-outsize"] = str(deltx * area_multiplier) + " " + str(delty * area_multiplier)
+            if random_filter: #if we have random points we set we set the radius to the max distance between points plus a buffer of 0.5
+                params["-a"]["radius1"] = str(max_point_distance + 0.5)
+                params["-a"]["radius2"] = str(max_point_distance + 0.5)
+            else:
+                params["-a"]["radius1"] = str(0.5 * step)
+                params["-a"]["radius2"] = str(0.5 * step)
 
-        params["-txe"] = str(minx) + " " + str(maxx)
-        params["-tye"] = str(miny) + " " + str(maxy)
-        params["-outsize"] = str(deltx * area_multiplier) + " " + str(delty * area_multiplier)
-        params["-a"]["radius1"] = str(0.5 * step)
-        params["-a"]["radius2"] = str(0.5 * step)
+            for clr in ["raw", "visible"]:
 
-        for clr in ["raw", "visible"]:
+                params["src_datasource"] = folder + id + "_keep_" + clr + "_step" + str(step) + ".vrt"
+                params["dst_filename"] = folder + id + "_" + clr + "_step" + str(step) + ".tiff"
 
-            params["src_datasource"] = folder + id + "_keep_" + clr + "_step" + str(step) + ".vrt"
-            params["dst_filename"] = folder + id + "_" + clr + "_step" + str(step) + ".tiff"
+                print(params)
+                # build gdal_grid request
+                text = grd.build_gdal_grid_string(params, outtext=False)
+                print(text)
+                text = ["gdal_grid"] + text
+                print(text)
 
-            print(params)
-            # build gdal_grid request
-            text = grd.build_gdal_grid_string(params, outtext=False)
-            print(text)
-            text = ["gdal_grid"] + text
-            print(text)
-
-            # call gdal_grid
-            print("Getting filtered raster by step " + str(step) + "for color " + clr)
-            out, err = utils.run_tool(text)
-            print("output" + out)
-            if err:
-                print("error:" + err)
-                raise Exception("gdal grid failed")
-
-        # upload to numpy
-        d = gdal.Open(folder + id + "_raw_step" + str(step) + ".tiff")
-        band = d.GetRasterBand(1)
-        # apply index
-        new_r_indexed_raw = gdalIO.apply_index_to_single_band(band,
-                                                              index)  # this is the last index from the fruit count
-        d = None
-
-        d = gdal.Open(folder + id + "_visible_step" + str(step) + ".tiff")
-        band = d.GetRasterBand(1)
-        # apply index
-        new_r_indexed_visible = gdalIO.apply_index_to_single_band(band,
-                                                                  index)  # this is the last index from the fruit count
-        d = None
-
-        # for clr in ["a"]:
-        for clr in ["a", "b", "c", "d"]:
-
-            params["src_datasource"] = folder + id + "_keep" + clr + "_step" + str(step) + ".vrt"
-            params["dst_filename"] = folder + id + "_" + clr + "_step" + str(step) + ".tiff"
-
-            # build gdal_grid request
-            text = grd.build_gdal_grid_string(params, outtext=False)
-            print(text)
-            text = ["gdal_grid"] + text
-            print(text)
-
-            # call gdal_grid
-            print("Getting filtered raster by step " + str(step) + "for color grade " + clr)
-            out, err = utils.run_tool(text)
-            print("output" + out)
-            if err:
-                print("error:" + err)
-                raise Exception("gdal grid failed")
+                # call gdal_grid
+                print("Getting filtered raster by step " + str(step) + "for color " + clr)
+                out, err = utils.run_tool(text)
+                print("output" + out)
+                if err:
+                    print("error:" + err)
+                    raise Exception("gdal grid failed")
 
             # upload to numpy
-            d = gdal.Open(folder + id + "_" + clr + "_step" + str(step) + ".tiff")
+            d = gdal.Open(folder + id + "_raw_step" + str(step) + ".tiff")
             band = d.GetRasterBand(1)
             # apply index
-            new_r_indexed = gdalIO.apply_index_to_single_band(band,
-                                                              index)  # this is the last index from the fruit count
+            new_r_indexed_raw = gdalIO.apply_index_to_single_band(band,
+                                                                  index)  # this is the last index from the fruit count
             d = None
 
-            # calculate average, std, total area (here a pixel is 0.25 m2,
-            # totla area for pixel > 0, total area for pixels with 0 value
+            d = gdal.Open(folder + id + "_visible_step" + str(step) + ".tiff")
+            band = d.GetRasterBand(1)
+            # apply index
+            new_r_indexed_visible = gdalIO.apply_index_to_single_band(band,
+                                                                      index)  # this is the last index from the fruit count
+            d = None
 
-            ####### get the indexed array for this colour grade
+            # for clr in ["a"]:
+            for clr in ["a", "b", "c", "d"]:
 
-            # d = gdal.Open(folder + id + "_" + clr + ".tiff")
-            # band = d.GetRasterBand(1)
-            # r_indexed = gdalIO.apply_index_to_single_band(band, index) # this is the last index from the fruit count
-            # d = None
-            index, r_indexed, properties = fileIO.load_object(folder + id + "_indexedarray_" + clr)
+                params["src_datasource"] = folder + id + "_keep" + clr + "_step" + str(step) + ".vrt"
+                params["dst_filename"] = folder + id + "_" + clr + "_step" + str(step) + ".tiff"
 
-            stats[step][clr] = {}
+                # build gdal_grid request
+                text = grd.build_gdal_grid_string(params, outtext=False)
+                print(text)
+                text = ["gdal_grid"] + text
+                print(text)
 
-            for i in np.unique(row_indexed):  # get the row numbers
+                # call gdal_grid
+                print("Getting filtered raster by step " + str(step) + "for color grade " + clr)
+                out, err = utils.run_tool(text)
+                print("output" + out)
+                if err:
+                    print("error:" + err)
+                    raise Exception("gdal grid failed")
 
-                area = math.pow(1 / area_multiplier, 2)
+                # upload to numpy
+                d = gdal.Open(folder + id + "_" + clr + "_step" + str(step) + ".tiff")
+                band = d.GetRasterBand(1)
+                # apply index
+                new_r_indexed = gdalIO.apply_index_to_single_band(band,
+                                                                  index)  # this is the last index from the fruit count
+                d = None
 
-                # add dictionary for this row
-                stats[step][clr][i] = {}
+                # calculate average, std, total area (here a pixel is 0.25 m2,
+                # totla area for pixel > 0, total area for pixels with 0 value
 
-                # get a mask for the current row
-                mask = row_indexed == i
-                # statistics for current row
+                ####### get the indexed array for this colour grade
 
-                # average, std, totalarea,total nonzero area, total zeroarea, total raw fruit count,
-                # average raw fruit count, std raw fruit count ,total visible fruitxm, average visible fruitXm, std visible fruitXm
+                # d = gdal.Open(folder + id + "_" + clr + ".tiff")
+                # band = d.GetRasterBand(1)
+                # r_indexed = gdalIO.apply_index_to_single_band(band, index) # this is the last index from the fruit count
+                # d = None
+                index, r_indexed, properties = fileIO.load_object(folder + id + "_indexedarray_" + clr)
 
-                # r_indexed is 2d , while new_r_indexed and mask are 1d
-                stats[step][clr][i]['truth'] = [r_indexed[0, :][mask].mean(), r_indexed[0, :][mask].std(),
-                                                r_indexed[0, :][mask].shape[0] * area,
-                                                np.count_nonzero(r_indexed[0, :][mask]) * area,
-                                                r_indexed[0, :][mask][r_indexed[0, :][mask] == 0].shape[0] * area,
-                                                r_indexed_raw[0, :][mask].sum(),
-                                                r_indexed_raw[0, :][mask].mean(),
-                                                r_indexed_raw[0, :][mask].std(),
-                                                r_indexed_visible[0, :][mask].sum(),
-                                                r_indexed_visible[0, :][mask].mean(),
-                                                r_indexed_visible[0, :][mask].std()]
+                stats[step][clr] = {}
 
-                '''
-                stats[step][clr][i]['truth'] = [r_indexed[mask].mean(), r_indexed[mask].std(),
-                                                r_indexed[mask].shape[0]*area, np.count_nonzero(r_indexed[mask])*area,
-                                                r_indexed[mask][r_indexed[mask] == 0].shape[0]*area,
-                                                r_indexed_raw[0,:][mask].sum(), r_indexed_raw[0,:][mask].mean(),r_indexed_raw[0,:][mask].std(),
-                                                r_indexed_visible[0,:][mask].sum(),r_indexed_visible[0,:][mask].mean()], r_indexed_visible[0,:][mask].std()]'''
+                for i in np.unique(row_indexed):  # get the row numbers
 
-                stats[step][clr][i]['interpolated'] = [new_r_indexed[mask].mean(), new_r_indexed[mask].std(),
-                                                       new_r_indexed[mask].shape[0] * area,
-                                                       np.count_nonzero(new_r_indexed[mask]) * area,
-                                                       new_r_indexed[mask][new_r_indexed[mask] == 0].shape[0] * area,
-                                                       new_r_indexed_raw[mask].sum(),
-                                                       new_r_indexed_raw[mask].mean(),
-                                                       new_r_indexed_raw[mask].std(),
-                                                       new_r_indexed_visible[mask].sum(),
-                                                       new_r_indexed_visible[mask].mean(),
-                                                       new_r_indexed_visible[mask].std()]
+                    area = math.pow(1 / area_multiplier, 2)
 
-                # compare = r_indexed[0,:][mask] - new_r_indexed[mask]
-                # stats[clr][step][i]['comparison'] = [compare.mean(),compare.std()]
-                # pass
-                # calculate average and variance for this surface
+                    # add dictionary for this row
+                    stats[step][clr][i] = {}
 
-                # mean.append(compare.mean())
-                # std.append(compare.std())
+                    # get a mask for the current row
+                    mask = row_indexed == i
+                    # statistics for current row
 
-    # save as a boxplot
+                    # average, std, totalarea,total nonzero area, total zeroarea, total raw fruit count,
+                    # average raw fruit count, std raw fruit count ,total visible fruitxm, average visible fruitXm, std visible fruitXm
+
+                    # r_indexed is 2d , while new_r_indexed and mask are 1d
+                    stats[step][clr][i]['truth'] = [r_indexed[0, :][mask].mean(), r_indexed[0, :][mask].std(),
+                                                    r_indexed[0, :][mask].shape[0] * area,
+                                                    np.count_nonzero(r_indexed[0, :][mask]) * area,
+                                                    r_indexed[0, :][mask][r_indexed[0, :][mask] == 0].shape[0] * area,
+                                                    r_indexed_raw[0, :][mask].sum(),
+                                                    r_indexed_raw[0, :][mask].mean(),
+                                                    r_indexed_raw[0, :][mask].std(),
+                                                    r_indexed_visible[0, :][mask].sum(),
+                                                    r_indexed_visible[0, :][mask].mean(),
+                                                    r_indexed_visible[0, :][mask].std()]
+
+                    '''
+                    stats[step][clr][i]['truth'] = [r_indexed[mask].mean(), r_indexed[mask].std(),
+                                                    r_indexed[mask].shape[0]*area, np.count_nonzero(r_indexed[mask])*area,
+                                                    r_indexed[mask][r_indexed[mask] == 0].shape[0]*area,
+                                                    r_indexed_raw[0,:][mask].sum(), r_indexed_raw[0,:][mask].mean(),r_indexed_raw[0,:][mask].std(),
+                                                    r_indexed_visible[0,:][mask].sum(),r_indexed_visible[0,:][mask].mean()], r_indexed_visible[0,:][mask].std()]'''
+
+                    stats[step][clr][i]['interpolated'] = [new_r_indexed[mask].mean(), new_r_indexed[mask].std(),
+                                                           new_r_indexed[mask].shape[0] * area,
+                                                           np.count_nonzero(new_r_indexed[mask]) * area,
+                                                           new_r_indexed[mask][new_r_indexed[mask] == 0].shape[0] * area,
+                                                           new_r_indexed_raw[mask].sum(),
+                                                           new_r_indexed_raw[mask].mean(),
+                                                           new_r_indexed_raw[mask].std(),
+                                                           new_r_indexed_visible[mask].sum(),
+                                                           new_r_indexed_visible[mask].mean(),
+                                                           new_r_indexed_visible[mask].std()]
+
+                    # compare = r_indexed[0,:][mask] - new_r_indexed[mask]
+                    # stats[clr][step][i]['comparison'] = [compare.mean(),compare.std()]
+                    # pass
+                    # calculate average and variance for this surface
+
+                    # mean.append(compare.mean())
+                    # std.append(compare.std())
+
+
+
 
     # print(mean)
     # print(std)
