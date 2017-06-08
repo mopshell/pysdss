@@ -12,16 +12,23 @@
 # set module path for pydoc documentation
 # sys.path.append(r'')
 
-import pickle
+#import pickle
 
 
-def save_object(f, ob):
+def save_object(f, ob, usedill=False):
     """Save an object on disk
 
     :param f: file path
     :param ob: object to save
     :return: None
     """
+
+    #https: // github.com / uqfoundation / dill
+    #dill allows serialization of lamdas
+    if usedill:
+        import dill as pickle
+    else:
+        import pickle
 
     out = None
     try:
@@ -34,11 +41,19 @@ def save_object(f, ob):
             out.close()
 
 
-def load_object(f):
+def load_object(f, usedill=False):
     """Load an object from disk
     :param f: file path
     :return: None
     """
+
+    #https: // github.com / uqfoundation / dill
+    #dill allows serialization of lamdas
+    if usedill:
+        import dill as pickle
+    else:
+        import pickle
+
     a = None
     b = None
     try:

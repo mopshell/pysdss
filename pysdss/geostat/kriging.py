@@ -14,7 +14,8 @@
 
 
 import numpy as np
-import variance
+from pysdss.geostat.variance import distance
+from scipy.spatial.distance import cdist
 
 
 def ordinary(data, model):
@@ -33,8 +34,10 @@ def ordinary(data, model):
     k1 = np.matrix(1)
     k = np.concatenate((k, k1), axis=0)
 
-    K =[[variance.distance(data[i][0:2], data[j][0:2]) for i in range(n)] for j in range(n)]
-    K = np.array(K)                     # list -> NumPy array
+    #K =[[distance(data[i][0:2], data[j][0:2]) for i in range(n)] for j in range(n)]
+    #K = np.array(K)                     # list -> NumPy array
+    K = cdist(data[:,:2], data[:,:2]) #use scipy instead
+
     K = model(K.ravel())                # [gamma(xi, xj)]
     K = np.matrix(K.reshape(n, n))      # array -> nxn matrix
     ones = np.matrix(np.ones(n))        # nx1 matrix of 1s
@@ -44,6 +47,7 @@ def ordinary(data, model):
     ones[0, n] = 0.0                        # last one is 0
     K = np.concatenate((K, ones), axis=0)   # add a new row
     w = np.linalg.solve(K, k)               # solve: K w = k
+
     zhat = (np.matrix(data[:, 2]) * w[:-1])[0, 0] # est vlaue
     sigmasq = (w.T * k)[0, 0]               # est error var
     if sigmasq < 0:
@@ -67,11 +71,14 @@ def simple(data, mu, model):
     k = model(data[:, 3])
     k = np.matrix(k).T  # 1xN matrix
 
-    K = [[variance.distance(data[i][0:2], data[j][0:2]) for i in range(n)] for j in range(n)]
-    K = np.array(K)                     # list -> NumPy array
+    #K = [[distance(data[i][0:2], data[j][0:2]) for i in range(n)] for j in range(n)]
+    #K = np.array(K)                     # list -> NumPy array
+    K= cdist(data[:,:2], data[:,:2]) #use scipy instead
+
     K = model(K.ravel())                # [gamma(xi, xj)]
     K = np.matrix(K.reshape(n, n))      # array -> nxn matrix
     w = np.linalg.solve(K, k)           # solve K w = k
+
     R = data[:, 2] - mu                     # get residuals
     zhat = (np.matrix(R)*w)[0, 0]       # est residual
     zhat = zhat + mu                    # est value

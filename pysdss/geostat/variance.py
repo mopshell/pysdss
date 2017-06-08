@@ -12,6 +12,8 @@
 
 import numpy as np
 from math import sqrt
+from scipy.spatial.distance import cdist
+
 
 
 def distance(a, b):
@@ -24,7 +26,7 @@ def distance(a, b):
 
 def semivar(data, lags, hh):
     """ Calculate empirical semivariance
-    :param data: a list or 2-D NumPy array, where each element has x,y,value
+    :param data: a 2-D NumPy array, where each element has x,y,value
     :param lags: distance bins in 1-D array
     :param hh: half of the bin size in distance
     :return: A 2-D array of [[h,h,h,...]
@@ -34,7 +36,9 @@ def semivar(data, lags, hh):
     semivariance = []
     n = len(data)
     # we calculate the distances between pair of points
-    dist = [[distance(data[i][0:2], data[j][0:2]) for i in range(n)] for j in range(n)]
+    #dist = [[distance(data[i][0:2], data[j][0:2]) for i in range(n)] for j in range(n)]
+    dist = cdist(data[:,:2], data[:,:2])
+
     for h in lags:
         gammas = []
         for i in range(n):
@@ -64,7 +68,9 @@ def covar(data, lags, hh):
     covariance = []
     n = len(data)
     # we calculate the distances between pair of points
-    dist = [[distance(data[i][0:2], data[j][0:2]) for i in range(n)] for j in range(n)]
+    #dist = [[distance(data[i][0:2], data[j][0:2]) for i in range(n)] for j in range(n)]
+    dist = cdist(data[:,:2], data[:,:2])
+
     for h in lags:
         c = []
         mu = 0

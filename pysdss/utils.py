@@ -508,8 +508,8 @@ def clean_dataframe (df,invalues,outvalues): # TODO check the use of  DataFrame.
 def rmse(predictions, targets):
     """
     Calculate the root mean square error
-    :param predictions: numpy array 
-    :param targets: numpy array 
+    :param predictions: 1d numpy array
+    :param targets: 1d numpy array
     :return: the rmse
     """
     return np.sqrt(((predictions - targets) ** 2).mean())

@@ -1650,7 +1650,7 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
 
 
 
-def test_interpret_result(stats, id, folder):
+def test_interpret_result(stats, id, folder, colmodel=None):
     '''
     Interpret the dictionary with the results and save a table
 
@@ -1674,7 +1674,9 @@ def test_interpret_result(stats, id, folder):
     print(b)
 
     # define the column names and convert to string
-    colmodel = ["avg", "std", "area","nozero_area", "zero_area", "raw_count","raw_avg","raw_std","visible_count","visible_avg","visible_std"]
+    if not colmodel:
+        colmodel = ["avg", "std", "area","nozero_area", "zero_area", "raw_count","raw_avg","raw_std","visible_count","visible_avg","visible_std"]
+
     NCOL = len(colmodel)
     cols =  ["row"] + colmodel
     for s in b:
@@ -1856,7 +1858,8 @@ def calculate_rmse(folder,id,nsteps=[2,3,4,5,6,7,8,9,10]):
     #export array to disk
     np.savetxt(folder + id + "_rsme.csv",arr , fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='', comments='')
 
-def test_compare_raster_totruth(point, id, folder,epsg=32611, step=[2, 3,4,5,6,7,8,9,10], removeduplicates=True, clean=None):
+def test_compare_raster_totruth(point, id, folder,epsg=32611, step=[2, 3,4,5,6,7,8,9,10], removeduplicates=True, clean=None,
+                                colorgrade=None, counts=None):
         """
         comparing original point values with the underlying pixel values and save comparison to disk
         use this when the workflow was using force_interpolation_by_row=False
@@ -1872,8 +1875,11 @@ def test_compare_raster_totruth(point, id, folder,epsg=32611, step=[2, 3,4,5,6,7
         """
 
         #step = [2, 3, 4,10]
-        colorgrade = ["a", "b", "c", "d"]
-        counts = ["raw", "visible"]
+
+        if not colorgrade:
+            colorgrade = ["a", "b", "c", "d"]
+        if not counts:
+            counts = ["raw", "visible"]
 
         # 1 open  csv
 
@@ -1928,7 +1934,7 @@ def test_compare_raster_totruth(point, id, folder,epsg=32611, step=[2, 3,4,5,6,7
 
 
 def test_compare_raster_totruth_byrow(point, id, folder, epsg=32611, step=[2, 3, 4, 5, 6, 7, 8, 9, 10], removeduplicates=True,
-                                clean=None, tempfolder="/temprasters/"):
+                                clean=None, tempfolder="/temprasters/", colorgrade=None, counts=None):
 
     """
     comparing original point values with the underlying pixel values and save comparison to disk
@@ -1947,8 +1953,10 @@ def test_compare_raster_totruth_byrow(point, id, folder, epsg=32611, step=[2, 3,
 
 
     # step = [2, 3, 4,10]
-    colorgrade = ["a", "b", "c", "d"]
-    counts = ["raw", "visible"]
+    if not colorgrade:
+        colorgrade = ["a", "b", "c", "d"]
+    if not counts:
+        counts = ["raw", "visible"]
 
     # 1 open  csv
     # id = "a16b2a828b9174d678e76be46619eb329"
@@ -2132,7 +2140,9 @@ def chart_rmse(folder,id):
 if __name__ == "__main__":
     pass
 
-    steps=[2,3,4,5,6,7,8,9,10]
+    #steps=[2,3,4,5,6,7,8,9,10]
+
+
     #id, stats = berrycolor_workflow_1(steps,"average")
     #id, stats = berrycolor_workflow_1(steps,"average")
     #folder = "/vagrant/code/pysdss/data/output/text/"+id+"/"
@@ -2176,23 +2186,59 @@ if __name__ == "__main__":
 
 
     #############################workflow1 updated
-    steps=[2,3,4,5,6,7,8,9,10]
+    steps=[2,3,4,5,6,7,8,9,10,20,30,50,100]
 
-    '''
+
     # original worflow with ordered filter and overlapping interpolation
     id, stats = berrycolor_workflow_1(steps,"average")
     folder = "/vagrant/code/pysdss/data/output/text/"+id+"/"
     fileIO.save_object( folder + id + "_statistics", stats)
-    '''
+    test_interpret_result(stats, id, folder)
+    point = folder + id + "_keep.csv"
+    test_compare_raster_totruth(point, id, folder, step=steps, clean=[[-1], [0]])
+    calculate_rmse_row(folder, id, nsteps=steps)
+    estimate_berries_byrow(id, folder,step=steps)
+    calculate_rmse(folder,id,nsteps=steps)
+    chart_rmse(folder, id)
 
-    '''
+    id, stats = berrycolor_workflow_1(steps)
+    folder = "/vagrant/code/pysdss/data/output/text/"+id+"/"
+    fileIO.save_object( folder + id + "_statistics", stats)
+    test_interpret_result(stats, id, folder)
+    point = folder + id + "_keep.csv"
+    test_compare_raster_totruth(point, id, folder, step=steps, clean=[[-1], [0]])
+    calculate_rmse_row(folder, id, nsteps=steps)
+    estimate_berries_byrow(id, folder, step=steps)
+    calculate_rmse(folder, id, nsteps=steps)
+    chart_rmse(folder, id)
+    #######################################
+
     # worflow with random filter (with first_last row point) and overlapping interpolation
     id, stats = berrycolor_workflow_1(steps, "average",random_filter=True, first_last=True)
     folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
     fileIO.save_object(folder + id + "_statistics", stats)
-    '''
+    test_interpret_result(stats, id, folder)
+    point = folder + id + "_keep.csv"
+    test_compare_raster_totruth(point, id, folder, step=steps, clean=[[-1], [0]])
+    calculate_rmse_row(folder, id, nsteps=steps)
+    estimate_berries_byrow(id, folder, step=steps)
+    calculate_rmse(folder, id, nsteps=steps)
+    chart_rmse(folder, id)
 
-    '''
+    # worflow with random filter (with first_last row point) and overlapping interpolation
+    id, stats = berrycolor_workflow_1(steps, "invdist", random_filter=True, first_last=True)
+    folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+    fileIO.save_object(folder + id + "_statistics", stats)
+    test_interpret_result(stats, id, folder)
+    point = folder + id + "_keep.csv"
+    test_compare_raster_totruth(point, id, folder, step=steps, clean=[[-1], [0]])
+    calculate_rmse_row(folder, id, nsteps=steps)
+    estimate_berries_byrow(id, folder, step=steps)
+    calculate_rmse(folder, id, nsteps=steps)
+    chart_rmse(folder, id)
+    #######################################
+
+
     # workflow with ordered filter  and force interpolation by row
     id, stats = berrycolor_workflow_1(steps, "average",force_interpolation_by_row=True)
     folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
@@ -2201,7 +2247,25 @@ if __name__ == "__main__":
     test_interpret_result(stats,id,folder)
     point = folder + id + "_keep.csv"
     test_compare_raster_totruth_byrow(point, id, folder,step=steps, clean=[[-1],[0]])
-    '''
+    calculate_rmse_row(folder, id, nsteps=steps)
+    estimate_berries_byrow(id, folder, step=steps)
+    calculate_rmse(folder, id, nsteps=steps)
+    chart_rmse(folder, id)
+
+    # workflow with ordered filter  and force interpolation by row
+    id, stats = berrycolor_workflow_1(steps, "invdist",force_interpolation_by_row=True)
+    folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+    fileIO.save_object(folder + id + "_statistics", stats)
+    stats = fileIO.load_object(folder + id + "_statistics")
+    test_interpret_result(stats,id,folder)
+    point = folder + id + "_keep.csv"
+    test_compare_raster_totruth_byrow(point, id, folder,step=steps, clean=[[-1],[0]])
+    calculate_rmse_row(folder, id, nsteps=steps)
+    estimate_berries_byrow(id, folder, step=steps)
+    calculate_rmse(folder, id, nsteps=steps)
+    chart_rmse(folder, id)
+
+    ################################
 
     # workflow with random filter (with first_last row point)  and force interpolation by row
     id, stats = berrycolor_workflow_1(steps, "average",force_interpolation_by_row=True,random_filter=True, first_last=True)
@@ -2211,5 +2275,20 @@ if __name__ == "__main__":
     test_interpret_result(stats,id,folder)
     point = folder + id + "_keep.csv"
     test_compare_raster_totruth_byrow(point, id, folder,step=steps, clean=[[-1],[0]])
+    calculate_rmse_row(folder, id, nsteps=steps)
+    estimate_berries_byrow(id, folder, step=steps)
+    calculate_rmse(folder, id, nsteps=steps)
+    chart_rmse(folder, id)
 
-
+    # workflow with random filter (with first_last row point)  and force interpolation by row
+    id, stats = berrycolor_workflow_1(steps, "invdist",force_interpolation_by_row=True,random_filter=True, first_last=True)
+    folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+    fileIO.save_object(folder + id + "_statistics", stats)
+    stats = fileIO.load_object(folder + id + "_statistics")
+    test_interpret_result(stats,id,folder)
+    point = folder + id + "_keep.csv"
+    test_compare_raster_totruth_byrow(point, id, folder,step=steps, clean=[[-1],[0]])
+    calculate_rmse_row(folder, id, nsteps=steps)
+    estimate_berries_byrow(id, folder, step=steps)
+    calculate_rmse(folder, id, nsteps=steps)
+    chart_rmse(folder, id)

@@ -11,6 +11,7 @@
 
 from math import sqrt
 import numpy as np
+import scipy.spatial.ckdtree as kdtree
 
 def read_data(fname):
     """
@@ -33,17 +34,62 @@ def read_data(fname):
 def prepare_interpolation_data(point, data, n=10):
     """Get the nearest points to a point
     :param point: a point object
-    :param data: a list of lists [[x,y,value],....]
+    :param data: a nested list [[x,y,value],....]
     :param n: number of nearest points to the point x
     :return: the n nearest points to point and the average value of data as a list
     """
     vals = [z[2] for z in data]
     mean = sum(vals)/len(vals)
-    dist = [sqrt((z[0]-point.x)**2 + (z[1]-point.y)**2) for z in data]
+    dist = [sqrt((z[0]-point.x)**2 + (z[1]-point.y)**2) for z in data] #here use scipy pdist instead?
     outdata = [(data[i][0], data[i][1], data[i][2], dist[i]) for i in range(len(dist))]
     outdata.sort(key=lambda x: x[3])
     outdata = outdata[:n]
     return outdata, mean
+
+
+def prepare_interpolation_data_array(point, data, n=10):
+    """Get the nearest points to a point
+    :param point: a point object
+    :param data: a 2darray [[x,y,value],....]
+    :param n: number of nearest points to the point x
+    :return: the n nearest points to point and the average value of data as a list
+    """
+    # vals = [z[2] for z in data]
+    # mean = sum(vals)/len(vals)
+
+    mean = np.mean(data[:, 2])
+    dist = np.sqrt(np.power(data[:, 0] - point.x, 2) + np.power(data[:, 1] - point.y, 2))
+
+    outdata = np.hstack((data, np.expand_dims(dist, axis=0).T)) #dist was 1D
+    srtd = outdata[outdata[:, 3].argsort()][:n,:]
+    return srtd, mean
+
+
+def prepare_interpolation_data_kdtree(point, data, n=10, tree=None):
+    """Get the nearest points to a point
+    :param point: point object
+    :param data:  a 2d array [[x,y,value],....]
+    :param n: the number of nearest points to search
+    :param kdtree: kdtree object made with kdtree.cKDTree()
+    :return: the n nearest points to point and the average
+    """
+
+    mean = np.mean(data[:,2])
+    #we need the x,y coordinates and a point array
+    point = np.array([point.x, point.y])
+
+    if tree:
+        distance, index = tree.query(point,n)
+    else:
+        xydata  = data[:,:2]
+        #use kdtree to return the n nearest points
+        distance, index = kdtree.cKDTree(xydata).query(point,n)
+
+    #extract the points from the original data and add column with distance
+    #data = data[index]
+    return np.hstack((data[index],np.expand_dims(distance, axis=0).T)), mean
+
+
 
 
 def rmse(empirical, theoretical):
@@ -60,6 +106,7 @@ if __name__ == "__main__":
     ###test semivariance,covariance anf fitting models
 
     def test_variancs_fitting():
+        import os.path
         import numpy as np
         from bokeh.plotting import figure
         from bokeh.io import output_file,  save
@@ -67,7 +114,7 @@ if __name__ == "__main__":
         import variance as vrc
         import fit
 
-        data = read_data("./test_data/necoldem.dat")
+        data = read_data(os.path.dirname(os.path.realpath(__file__)) + "/test_data/necoldem.dat")
 
         hh = 50 #half of the bin size
         lags = np.arange(0, 3000, hh)
@@ -77,7 +124,7 @@ if __name__ == "__main__":
         #print(cov)
 
         #chart empirical semivariance and covariance
-        output_file("./test_data/necoldem.dat.html")
+        output_file(os.path.dirname(os.path.realpath(__file__)) + "/test_data/necoldem.dat.html")
         f = figure()
         f.line(gamma[0, :], gamma[1, :], line_color="green", line_width=2, legend="Semivariance")
         f.square(gamma[0, :], gamma[1, :], fill_color=None, line_color="green", legend="Semivariance")
@@ -93,7 +140,7 @@ if __name__ == "__main__":
         sve = fit.fitsemivariogram(data, gamma, fit.exponential)
 
         #chart the fitted models
-        output_file("./test_data/necoldem.dat.fitted.html")
+        output_file(os.path.dirname(os.path.realpath(__file__)) + "/test_data/necoldem.dat.fitted.html")
         f = figure()
 
         f.circle(gamma[0], gamma[1], fill_color=None, line_color="blue", legend="Empirical")
@@ -136,14 +183,14 @@ if __name__ == "__main__":
 
     # testing ordinary kriging for 2 points
     def test_ordinaryk():
-
+        import os.path
         import numpy as np
         import variance as vrc
         import fit
         import test_data.point as p
         import kriging as kr
 
-        data = read_data("./test_data/necoldem.dat")
+        data = read_data(os.path.dirname(os.path.realpath(__file__))  + "/test_data/necoldem.dat")
 
         print("calculte empirical semivariance")
         hh = 50
@@ -182,7 +229,7 @@ if __name__ == "__main__":
 
     def interpolate_surface():
 
-
+        import os.path
         import numpy as np
         import variance as vrc
         import fit
@@ -192,7 +239,9 @@ if __name__ == "__main__":
         from bokeh.plotting import figure
         from bokeh.io import output_file, save
 
-        data = read_data("./test_data/necoldem.dat")
+        data = read_data(os.path.dirname(os.path.realpath(__file__))  + "/test_data/necoldem.dat")
+
+        ##TODO the semivariogram should be computed for every surface cell!!!
 
         print("calculte empirical semivariance")
         hh = 50
@@ -231,13 +280,14 @@ if __name__ == "__main__":
         error_simple = np.zeros((nx,ny))
 
 
+
         print("Executing simple and ordinary kriging, this will take some time")
         # execute kriging for each surface cell
         for i in range(nx):
             for j in range(ny):
 
                 x = p.Point(x0+i*dsize, y0+j*dsize)
-                new_data, mu = prepare_interpolation_data(x,data)    #### TODO: this should use spatial indexing
+                new_data, mu = prepare_interpolation_data_array(x,data,n=1)    #### TODO: this should use spatial indexing
 
                 ordinary = kr.ordinary(np.array(new_data), semivariogram)
                 surface_ordinary[i,j] = ordinary[0]
@@ -249,12 +299,13 @@ if __name__ == "__main__":
 
 
         # save arrays to disk, array are transposed to have the correct x,y coordimates
-        np.savez("./test_data/surfaces.npz",surface_ordinary=surface_ordinary.T, error_ordinary=error_ordinary.T,
-                 surface_simple=surface_simple.T, error_simple=error_simple.T, surface_difference= surface_ordinary-surface_simple)
+        np.savez(os.path.dirname(os.path.realpath(__file__))  +"/test_data/surfaces.npz",surface_ordinary=surface_ordinary.T,
+                 error_ordinary=error_ordinary.T, surface_simple=surface_simple.T, error_simple=error_simple.T,
+                 surface_difference= surface_ordinary-surface_simple)
 
 
     def plot_surfaces():
-
+        import os.path
         import numpy as np
         from bokeh.plotting import figure
         from bokeh.io import output_file, save
@@ -263,14 +314,14 @@ if __name__ == "__main__":
 
         print("plotting surfaces")
         outs = ["surface_ordinary","error_ordinary","surface_simple","error_simple", "surface_difference"]
-        surfaces = np.load("./test_data/surfaces.npz")
+        surfaces = np.load(os.path.dirname(os.path.realpath(__file__))  +"/test_data/surfaces.npz")
         surface_ordinary = surfaces["surface_ordinary"]
         error_ordinary = surfaces["error_ordinary"]
         surface_simple = surfaces["surface_simple"]
         error_simple = surfaces["error_simple"]
         surface_difference = surfaces["surface_difference"]
 
-        df = pd.read_csv("./test_data/necoldem.dat", header=None, sep=" ")
+        df = pd.read_csv(os.path.dirname(os.path.realpath(__file__))  + "/test_data/necoldem.dat", header=None, sep=" ")
 
         xmin = df.values[:,0].min()
         ymin = df.values[:,1].min()
@@ -279,7 +330,7 @@ if __name__ == "__main__":
         dy = df.values[:, 1].max() - df.values[:, 1].min()
 
         for i in outs:
-            output_file("./test_data/necoldem_"+ i+ ".html", title="necoldem_"+ i)
+            output_file(os.path.dirname(os.path.realpath(__file__))  + "/test_data/necoldem_"+ i+ ".html", title="necoldem_"+ i)
             f = figure()
 
             color_mapper = LinearColorMapper(palette="Viridis256", low=eval(i).min(), high=eval(i).max())
@@ -291,8 +342,104 @@ if __name__ == "__main__":
             save(f)
 
 
-    #interpolate_surface()
+    interpolate_surface()
     plot_surfaces()
 
+    def test_distances_kdtree():
+        import test_data.point as p
+        import os.path
+        import time
+
+        data = read_data( os.path.dirname(os.path.realpath(__file__))  +"/test_data/necoldem.dat")
+        point = p.Point(337000, 4440911)
+
+        srtd, mean = prepare_interpolation_data_array(point, data, n=10)
+        print(srtd)
+        print(mean)
+
+        srtd1, mean1 = prepare_interpolation_data_kdtree(point, data, n=10)
+
+        print(srtd1)
+        print(mean1)
+
+        print(np.array_equal(srtd, srtd1))
+        print(mean == mean1)
 
 
+        print("times with array")
+        for n in [10,50,100]:
+            start = time.time()
+            prepare_interpolation_data_array(point, data, n=n)
+            stop = time.time()
+            duration = stop - start
+            print(duration*1000)
+
+        print("times with kdtree")
+        for n in [10,50,100]:
+            start = time.time()
+            prepare_interpolation_data_kdtree(point, data, n=n)
+            stop = time.time()
+            duration = stop - start
+            print(duration*1000)
+
+        print("times with prebuilt kdtree")
+        xydata = data[:, :2]
+        tree= kdtree.cKDTree(xydata)
+        for n in [10,50,100]:
+            start = time.time()
+            prepare_interpolation_data_kdtree(point, data, n=n, tree=tree)
+            stop = time.time()
+            duration = stop - start
+            print(duration*1000)
+
+    #test_distances_kdtree()
+
+
+    def test_distances():
+        import test_data.point as p
+        import os.path
+        import time
+        #from pysdss.geostat.variance import distance
+
+        from scipy.spatial.distance import cdist
+        from scipy.spatial.distance import pdist
+
+        data = read_data(os.path.dirname(os.path.realpath(__file__)) + "/test_data/necoldem.dat")
+
+        xydata = data[:,:2] #take only x,y
+
+
+        ##### pdist
+        start = time.time()
+        dists = pdist(xydata)
+        stop = time.time()
+        duration = stop - start
+        print(duration * 1000)
+
+        #print(len(dists))
+        #print(dists)
+
+        ##### cdist (use this to get also the distance zero)
+        start = time.time()
+        dists = cdist(xydata,xydata)
+        stop = time.time()
+        duration = stop - start
+        print(duration * 1000)
+
+        print(dists.shape)
+        print(dists)
+
+
+        ###### with lists (slower)
+        '''
+        n = len(data)
+        # we calculate the distances between pair of points
+        start = time.time()
+        dists2 = [[distance(xydata[i], xydata[j]) for i in range(n)] for j in range(n)]
+        stop = time.time()
+        duration = stop - start
+        print(duration * 1000)
+        print(dists2)
+        '''
+
+    #test_distances()
