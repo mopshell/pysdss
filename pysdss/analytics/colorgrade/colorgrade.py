@@ -197,6 +197,7 @@ def get_boxes(file, berry_x_unit, box_volume):
     np.savetxt(folder + "/_" + "count_boxes_output.csv", out, delimiter=',', fmt='%.3f', newline='\n', header=','.join(cols),footer=''
                    , comments='')
 
+
 def berrycolor_workflow(id, file, usecols, new_column_names, outfolder, average_point_distance=None, grid=None,
                           rowdirection="x",area_multiplier=2, filterzero=False, project="32611", buffersize=0.25,
                           nodata=-1, force_interpolation=False ):
@@ -269,7 +270,7 @@ def berrycolor_workflow(id, file, usecols, new_column_names, outfolder, average_
     if not average_point_distance:
         print("calculating average distance")
         average_point_distance = utils.average_point_distance(file, "lon", "lat", "row", direction=rowdirection,
-                                                              remove_duplicates=False)
+                                                              rem_duplicates=True, operation="mean")
 
     #set the interpolation radius based on threshold and average_point distance
     radius = "0.8" if average_point_distance <= threshold else str(average_point_distance * 2)
@@ -457,8 +458,14 @@ def berrycolor_workflow(id, file, usecols, new_column_names, outfolder, average_
 
     # check if all pixels have a value, otherwise assign nan to nodata value (wich will not be considered for statistics)
     if new_r_indexed_raw.min() == nodata:
+        warnings.warn(
+            "indexed data visible berry raw counr has nodata values, the current implementation will"
+            " count this pixels as nozero values", RuntimeWarning)
         new_r_indexed_raw[new_r_indexed_raw == nodata] = 'nan'  # careful nan is float
     if new_r_indexed_visible.min() == nodata:
+        warnings.warn(
+            "indexed data visible berry per meters has nodata values, the current implementation will"
+            " count this pixels as nozero values", RuntimeWarning)
         new_r_indexed_visible[new_r_indexed_visible == nodata] = 'nan'
 
     stats = {}

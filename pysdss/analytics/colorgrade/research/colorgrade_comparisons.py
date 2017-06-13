@@ -2135,6 +2135,44 @@ def chart_rmse(folder,id):
     f.line(x_labels , df.values[0,int(ncols/2):], line_width=2)
     save(f)
 
+def chart_estimated_berries(id, folder, steps=[2]):
+
+    """
+    Chart the estimated berries
+    :param id:
+    :param folder:
+    :param steps:
+    :return:
+    """
+    from bokeh.plotting import figure
+    from bokeh.io import output_file,  save
+
+    path = folder + id + "_count_stats_byrow.csv"
+
+    cols = ['row', 'estimated_berries'] + ["step"+str(s)+"_estimated_berries" for s in steps]
+
+    df = pd.read_csv(path, usecols=cols)
+
+    #make new chart directory if it does not exist
+    if not os.path.exists(folder +"/charts"):
+        os.mkdir(folder + "/charts")
+
+    #make new chart directory if it does not exist
+    if not os.path.exists(folder +"/charts/estimatedberries"):
+        os.mkdir(folder + "/charts/estimatedberries")
+
+    for s in steps:
+
+        output_file(folder +"/charts/estimatedberries/estimated_step"+str(s)+".html")
+        f = figure(title='Estimeted berries: original VS step'+str(s))
+        f.line(df["row"], df["estimated_berries"], line_color="green", line_width=1, legend="Original")
+        f.line(df["row"], df["step"+str(s)+"_estimated_berries"], line_color="red", line_width=1, legend="Step"+str(s))
+        f.legend.location = "top_left"
+        save(f)
+
+
+
+
 
 
 if __name__ == "__main__":
@@ -2185,6 +2223,8 @@ if __name__ == "__main__":
     #chart_rmse(folder,id)
 
 
+
+    '''
     #############################workflow1 updated
     steps=[2,3,4,5,6,7,8,9,10,20,30,50,100]
 
@@ -2292,3 +2332,12 @@ if __name__ == "__main__":
     estimate_berries_byrow(id, folder, step=steps)
     calculate_rmse(folder, id, nsteps=steps)
     chart_rmse(folder, id)
+    '''
+
+    steps = [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
+    id= "a40b9fc7181184bf0b9835f830a677513"
+    folder = "/vagrant/code/pysdss/data/output/text/analysis0806_steps2to100/" + id + "/"
+    chart_estimated_berries(id, folder, steps=steps)
+
+
+

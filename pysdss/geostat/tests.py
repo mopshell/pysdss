@@ -181,6 +181,111 @@ if __name__ == "__main__":
         f.legend.location = "top_left"
         save(f)
 
+
+
+    def test_variance_fitting2():
+        import os.path
+        import numpy as np
+        from bokeh.plotting import figure
+        from bokeh.io import output_file,  save
+        from bokeh.models import Label
+        import variance as vrc
+        import fit
+        import time
+
+        data = read_data(os.path.dirname(os.path.realpath(__file__)) + "/test_data/necoldem.dat")
+
+        hh = 5 #half of the bin size
+        lags = np.arange(0, 3000, hh)
+
+        start = time.time()
+        gamma = vrc.semivar(data, lags, hh)
+        stop = time.time()
+        duration = stop - start
+        print(duration * 1000)
+
+        print(gamma)
+
+        lags = np.arange(0-hh, 3000-hh, 2*hh)
+
+        start = time.time()
+        gamma = vrc.semivar2(data, lags, hh)
+        cov = vrc.covar(data,lags,hh)
+        stop = time.time()
+        duration = stop - start
+        print(duration * 1000)
+
+        print(gamma)
+
+
+
+        return
+
+        #chart empirical semivariance and covariance
+        output_file(os.path.dirname(os.path.realpath(__file__)) + "/test_data/necoldem.dat.html")
+        f = figure()
+        f.line(gamma[0, :], gamma[1, :], line_color="green", line_width=2, legend="Semivariance")
+        f.square(gamma[0, :], gamma[1, :], fill_color=None, line_color="green", legend="Semivariance")
+        f.line(cov[0, :], cov[1,:], line_color="red", line_width=2, legend="Covariance")
+        f.square(cov[0,:], cov[1,:], fill_color=None, line_color="red", legend="Covariance")
+        f.legend.location = "top_left"
+        save(f)
+
+        #fit models to find best ranges
+        svs = fit.fitsemivariogram(data, gamma, fit.spherical)
+        svl = fit.fitsemivariogram(data, gamma, fit.linear)
+        svg = fit.fitsemivariogram(data, gamma, fit.gaussian)
+        sve = fit.fitsemivariogram(data, gamma, fit.exponential)
+
+        #chart the fitted models
+        output_file(os.path.dirname(os.path.realpath(__file__)) + "/test_data/necoldem.dat.fitted.html")
+        f = figure()
+
+        f.circle(gamma[0], gamma[1], fill_color=None, line_color="blue", legend="Empirical")
+        f.line(gamma[0], svs(gamma[0]), line_color="red", line_width=2, legend="Spherical")
+        f.line(gamma[0], svl(gamma[0]), line_color="orange", line_width=2, legend="Linear")
+        f.line(gamma[0], svg(gamma[0]), line_color="black", line_width=2, legend="Gaussiab")
+        f.line(gamma[0], sve(gamma[0]), line_color="green", line_width=2, legend="Exponential")
+
+        #calculate rmse for the models
+        rmses = rmse(gamma[0], svs(gamma[0]))
+        rmsel = rmse(gamma[0], svl(gamma[0]))
+        rmseg = rmse(gamma[0], svg(gamma[0]))
+        rmsee = rmse(gamma[0], sve(gamma[0]))
+
+        # making multiline labels /n and <br/> do not work
+        rmse_label = Label(x=150, y=110, x_units='screen', y_units='screen',
+                         text="RMSE",render_mode='css',
+                         background_fill_color='white', background_fill_alpha=1.0)
+        rmse_label2 = Label(x=150, y=90, x_units='screen', y_units='screen',
+                         text="Spherical: "+str(rmses),render_mode='css',
+                         background_fill_color='white', background_fill_alpha=1.0)
+        rmse_label3 = Label(x=150, y=70, x_units='screen', y_units='screen',
+                         text="Linear:" +str(rmsel),render_mode='css',
+                         background_fill_color='white', background_fill_alpha=1.0)
+        rmse_label4 = Label(x=150, y=50, x_units='screen', y_units='screen',
+                         text="Gaussian:"+str(rmseg),render_mode='css',
+                         background_fill_color='white', background_fill_alpha=1.0)
+        rmse_label5 = Label(x=150, y=30, x_units='screen', y_units='screen',
+                         text="Exponential:"+str(rmsee),render_mode='css',
+                         background_fill_color='white', background_fill_alpha=1.0)
+        f.add_layout(rmse_label)
+        f.add_layout(rmse_label2)
+        f.add_layout(rmse_label3)
+        f.add_layout(rmse_label4)
+        f.add_layout(rmse_label5)
+
+
+        f.legend.location = "top_left"
+        save(f)
+
+
+    test_variance_fitting2()
+
+
+
+
+
     # testing ordinary kriging for 2 points
     def test_ordinaryk():
         import os.path
@@ -287,7 +392,7 @@ if __name__ == "__main__":
             for j in range(ny):
 
                 x = p.Point(x0+i*dsize, y0+j*dsize)
-                new_data, mu = prepare_interpolation_data_array(x,data,n=1)    #### TODO: this should use spatial indexing
+                new_data, mu = prepare_interpolation_data_array(x,data,n=10)    #### TODO: this should use spatial indexing
 
                 ordinary = kr.ordinary(np.array(new_data), semivariogram)
                 surface_ordinary[i,j] = ordinary[0]
@@ -342,8 +447,8 @@ if __name__ == "__main__":
             save(f)
 
 
-    interpolate_surface()
-    plot_surfaces()
+    #interpolate_surface()
+    #plot_surfaces()
 
     def test_distances_kdtree():
         import test_data.point as p
