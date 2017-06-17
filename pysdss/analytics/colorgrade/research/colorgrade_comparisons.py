@@ -1649,10 +1649,16 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
     # {2: {"a": {1: {'truth': {}, 'interpolated': {}}}}}
 
 
+####OUTPUT STATISTICS#################
+
+
 
 def test_interpret_result(stats, id, folder, colmodel=None):
     '''
-    Interpret the dictionary with the results and save a table
+    Interpret the dictionary with the results and save a table, statistics are per row and files are per color grade
+
+    output file names are like <colorgrade>_output.csv
+
 
     table columns are:
     row|avg|std|area|nozero_area|zero_area|raw_count|raw_avg|raw_std|visible_count|visible_avg|visible_std
@@ -1737,6 +1743,263 @@ def test_interpret_result(stats, id, folder, colmodel=None):
         np.savetxt(folder + id +"_"+j+"_output.csv",output , fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='', comments='')
 
 
+def test_compare_raster_totruth(point, id, folder, epsg=32611, step=[2, 3, 4, 5, 6, 7, 8, 9, 10],
+                                removeduplicates=True, clean=None,
+                                colorgrade=None, counts=None):
+    """
+    comparing original point values with the underlying pixel values and save comparison to disk
+    use this when the workflow was using force_interpolation_by_row=False
+
+    output file name is like _ERRORSTATISTICS.csv
+
+    :param point: this is the id +"_keep.csv" file
+    :param id: operation id
+    :param folder: the folder with point
+    :param epsg: epsg code for spatial reference
+    :param step: the steps to consider
+    :param removeduplicates: true to get average value for duplicate points
+    :param clean: chage first value with the second [[-1],[0]] , useful to clean nodata values
+    :param tempfolder: name of the folder storing the rasters by row
+    :return:
+    """
+
+    # step = [2, 3, 4,10]
+
+    if not colorgrade:
+        colorgrade = ["a", "b", "c", "d"]
+    if not counts:
+        counts = ["raw", "visible"]
+
+    # 1 open  csv
+
+    # id = "a16b2a828b9174d678e76be46619eb329"
+    # folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+    # point = folder + id + "_keep.csv"
+
+
+    if removeduplicates:  # TODO check that remove dulicates will not alter the row number
+        # remove duplicates and save to newfile, set name for point file
+        df = utils.remove_duplicates(point, ["lat", "lon"], operation="mean")
+        point = folder + id + "_keep_nodup.csv"
+        df.to_csv(point)
+
+    df = pd.read_csv(point, usecols=["id", "row", "a", "b", "c", "d", "raw_fruit_count", "visible_fruit_per_m"])
+
+    # 2 extract
+
+
+    # define a list of files
+    rasters = [folder + id + "_" + y + "_step" + str(x) + ".tiff" for x in step for y in colorgrade]
+    rasters2 = [folder + id + "_" + y + "_step" + str(x) + ".tiff" for x in step for y in counts]
+
+    spatialRef = osr.SpatialReference()
+    spatialRef.ImportFromEPSG(epsg)
+    srs = spatialRef.ExportToProj4()
+    vrtdict = {"layername": os.path.basename(point).split(".")[0], "fullname": point, "easting": "lon",
+               "northing": "lat", "srs": srs}
+
+    c = []
+    for r in rasters:
+        stat = utils2.compare_csvpoint_cell(point, r, vrtdict, overwrite=False)
+        c.append(stat)
+
+    arr = np.transpose(np.asarray(c))
+    newdf = pd.DataFrame(arr, columns=["step" + str(x) + y for x in step for y in colorgrade])
+
+    c = []
+    for r in rasters2:
+        stat = utils2.compare_csvpoint_cell(point, r, vrtdict, overwrite=False)
+        c.append(stat)
+
+    arr = np.transpose(np.asarray(c))
+    newdf2 = pd.DataFrame(arr, columns=["step" + str(x) + y for x in step for y in counts])
+
+    outdf = pd.concat([df, newdf, newdf2], axis=1)
+
+    if clean:  # clean the dataframe, useful to hide nodata values in the result  e.g convert -1 with 0
+        utils.clean_dataframe(outdf, clean[0], clean[1])  # TODO check the use of  DataFrame.replace
+
+    outdf.to_csv(folder + id + "_ERRORSTATISTICS.csv")
+
+
+def test_compare_raster_totruth_byrow(point, id, folder, epsg=32611, step=[2, 3, 4, 5, 6, 7, 8, 9, 10],
+                                      removeduplicates=True,
+                                      clean=None, tempfolder="/temprasters/", colorgrade=None, counts=None):
+    """
+    comparing original point (with no filter) values with the underlying pixel values and save comparison to disk
+    use this when the workflow was using force_interpolation_by_row=True
+
+    output file name is like _ERRORSTATISTICS.csv
+
+
+    :param point: this is the id +"_keep.csv" file
+    :param id: operation id
+    :param folder: the folder with point
+    :param epsg: epsg code for spatial reference
+    :param step: the steps to consider
+    :param removeduplicates: true to get average value for duplicate points
+    :param clean: chage first value with the second [[-1],[0]] , useful to clean nodata values
+    :param tempfolder: name of the folder storing the rasters by row
+    :return:
+    """
+
+    # step = [2, 3, 4,10]
+    if not colorgrade:
+        colorgrade = ["a", "b", "c", "d"]
+    if not counts:
+        counts = ["raw", "visible"]
+
+    # 1 open  csv
+    # id = "a16b2a828b9174d678e76be46619eb329"
+    # folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+    # point = folder + id + "_keep.csv"
+
+    if removeduplicates:  # TODO check that remove dulicates will not alter the row number
+        # remove duplicates and save to newfile, set name for point file
+        df = utils.remove_duplicates(point, ["lat", "lon"], operation="mean")
+        point = folder + id + "_keep_nodup.csv"
+        df.to_csv(point, index=False)
+
+    df = pd.read_csv(point,
+                     usecols=["id", "row", "a", "b", "c", "d", "raw_fruit_count", "visible_fruit_per_m", "lat", "lon"])
+    # find unique row numbers
+    rows = sorted(df["row"].unique())
+    # filter by row and save to tempfolder
+    for row in rows:
+        row = int(row)
+        rowdf = df[df["row"] == row]
+        # save csv file to disk
+        rowdf.to_csv(folder + "/temprasters/" + id + "_keep_row" + str(row) + ".csv", index=False)
+    df.drop(["lat", "lon"], axis=1, inplace=True)  # we dont want in the final result
+
+    # 2 extract
+    # define a dictionary of files
+    rasters = {}
+    rasters2 = {}
+    for row in rows:
+        row = int(row)
+        # this will be in order a,b,c,d   and raw,visible
+        rasters[row] = [folder + tempfolder + id + "_" + y + "_step" + str(x) + "_row" + str(row) + ".tiff" for x in
+                        step for y in colorgrade]
+        rasters2[row] = [folder + tempfolder + id + "_" + y + "_step" + str(x) + "_row" + str(row) + ".tiff" for x in
+                         step for y in counts]
+
+    # define a gdal spatial reference object
+    spatialRef = osr.SpatialReference()
+    spatialRef.ImportFromEPSG(epsg)
+    srs = spatialRef.ExportToProj4()
+
+    c = []
+    for row in rows:
+        row = int(row)
+        orig_points = folder + "/temprasters/" + id + "_keep_row" + str(row) + ".csv"
+        vrtdict = {"layername": os.path.basename(orig_points).split(".")[0], "fullname": orig_points, "easting": "lon",
+                   "northing": "lat", "srs": srs}
+        raster_row = []
+        for r in rasters[row]:
+            stat = utils2.compare_csvpoint_cell(orig_points, r, vrtdict, overwrite=True)
+            raster_row.append(stat)  # this will be a linear collecion of values step2a, step2b,....
+        c.append(np.transpose(np.asarray(raster_row)))
+
+    # we stack vertically all the rows and convert to dataframe
+    arr_colour = np.vstack(c)
+    newdf = pd.DataFrame(arr_colour, columns=["step" + str(x) + y for x in step for y in colorgrade])
+
+    c = []
+    for row in rows:
+        row = int(row)
+        orig_points = folder + "/temprasters/" + id + "_keep_row" + str(row) + ".csv"
+        vrtdict = {"layername": os.path.basename(orig_points).split(".")[0], "fullname": orig_points, "easting": "lon",
+                   "northing": "lat", "srs": srs}
+        raster_row = []
+        for r in rasters2[row]:
+            # overwrite false because we already have the shapefiles
+            stat = utils2.compare_csvpoint_cell(orig_points, r, vrtdict, overwrite=False)
+            raster_row.append(stat)
+        c.append(np.transpose(np.asarray(raster_row)))
+
+    arr_count = np.vstack(c)
+    newdf2 = pd.DataFrame(arr_count, columns=["step" + str(x) + y for x in step for y in counts])
+
+    # stack the 3 dataframe horizontally
+    outdf = pd.concat([df, newdf, newdf2], axis=1)
+
+    if clean:  # clean the dataframe, useful to hide nodata values in the result  e.g convert -1 with 0
+        utils.clean_dataframe(outdf, clean[0], clean[1])  # TODO check the use of  DataFrame.replace
+
+    outdf.to_csv(folder + id + "_ERRORSTATISTICS.csv", index=False)
+
+
+def estimate_berries_byrow(folder,id, steps=[2, 3, 4, 5, 6, 7, 8, 9, 10]):
+
+    """ Output comparison between original points (with no filter) and interploated points for average, std, estimated number per row
+
+    data comes from _ERRORSTATISTICS.csv
+
+    :param id:
+    :param folder:
+    :param steps:
+    :return:
+    """
+
+    left_fields = ["row","length","visible_m_avg_original","visible_m_std_original","estimated_berries_original"]
+    right_fields = ["visible_m_avg", "delta_avg", "visible_std", "delta_std", "estimated_berries", "delta_estimates"]
+
+
+    # calculate row length
+    lengths = utils.row_length(folder + id + "_keep.csv", "lon", "lat", "row", conversion_factor=1)
+    # initialize output array
+    out = np.zeros((lengths.shape[0], 5 + (len(steps)+1)*6))
+    out[:,0:2] = lengths
+
+    # open  _ERRORSTATISTICS and calculate average and std per row for the visible count
+    path = folder + id + "_ERRORSTATISTICS.csv"
+    df = pd.read_csv(path, usecols=['row', 'visible_fruit_per_m'])
+
+    # open one of the files with the statistics for the rasterized data
+    path = folder + id + "_d_output.csv"
+    df2 = pd.read_csv(path)
+
+    #gey statistics for original points and rasterized points
+    rows = lengths[:,0]
+    for i,row in enumerate(rows):
+        # select one vineyard row
+        fdf = df[df['row'] == row]
+
+        out[i, 2] = fdf['visible_fruit_per_m'].mean()
+        out[i, 3] = fdf['visible_fruit_per_m'].std()
+        out[i, 4] = out[i, 1] * out[i, 2]
+
+        out[i, 5] = df2["visible_avg"].values[i]
+        out[i, 6] = np.absolute(out[i, 5] - out[i, 2])
+        out[i, 7] = df2["visible_std"].values[i]
+        out[i, 8] = np.absolute(out[i, 7] - out[i, 3])
+        out[i, 9] = out[i, 1] * out[i, 5]
+        out[i, 10] = np.absolute(out[i, 9] -  out[i, 4])
+
+    # get statistics for interpolated filtered points
+    idxstart = 11
+    for s in steps:
+        for i, row in enumerate(rows):
+            out[i, idxstart] = df2[ "step"+str(s)+"_visible_avg"].values[i]
+            out[i, idxstart+1] = np.absolute(out[i, idxstart] - out[i, 2])
+            out[i, idxstart+2] = df2["step"+str(s)+"_visible_std"].values[i]
+            out[i, idxstart+3] = np.absolute(out[i, idxstart+2] - out[i, 3])
+            out[i, idxstart+4] = out[i, 1] * out[i, idxstart]
+            out[i, idxstart+5] = np.absolute(out[i, idxstart+4] - out[i, 4])
+        idxstart += len(right_fields)
+
+    # save array to disk
+    cols = left_fields + right_fields
+    cols += ["step"+str(x)+"_"+ i  for x in steps for i in right_fields ]
+    outcols = ','.join(cols)
+    np.savetxt(folder + id + "_count_stats_byrow.csv", out, fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='',
+               comments='')
+
+
+########CALCULATE RMSE#######################
+
+
 def calculate_rmse_row_0(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a","b","c","d"]):
     """
     rmse based on comparison with the rasterized points
@@ -1765,7 +2028,9 @@ def calculate_rmse_row_0(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = [
 
 def calculate_rmse_row(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a","b","c","d"]):
     """
-    rmse based on comparison with the original points (this is preferred to calculate_rmse_row)
+    rmse based on comparison with the original points (this is preferred to calculate_rmse_row_0)
+    rmse are calculated for each row, the number of items are the points of the row
+    the starting file is the ERRORSTATISTICS.csv file which contains values for the original points and the underlying pixels
     :param folder: 
     :param id: 
     :param nsteps: 
@@ -1858,254 +2123,16 @@ def calculate_rmse(folder,id,nsteps=[2,3,4,5,6,7,8,9,10]):
     #export array to disk
     np.savetxt(folder + id + "_rsme.csv",arr , fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='', comments='')
 
-def test_compare_raster_totruth(point, id, folder,epsg=32611, step=[2, 3,4,5,6,7,8,9,10], removeduplicates=True, clean=None,
-                                colorgrade=None, counts=None):
-        """
-        comparing original point values with the underlying pixel values and save comparison to disk
-        use this when the workflow was using force_interpolation_by_row=False
-        :param point: this is the id +"_keep.csv" file
-        :param id: operation id
-        :param folder: the folder with point
-        :param epsg: epsg code for spatial reference
-        :param step: the steps to consider
-        :param removeduplicates: true to get average value for duplicate points
-        :param clean: chage first value with the second [[-1],[0]] , useful to clean nodata values
-        :param tempfolder: name of the folder storing the rasters by row
-        :return:
-        """
 
-        #step = [2, 3, 4,10]
-
-        if not colorgrade:
-            colorgrade = ["a", "b", "c", "d"]
-        if not counts:
-            counts = ["raw", "visible"]
-
-        # 1 open  csv
-
-        #id = "a16b2a828b9174d678e76be46619eb329"
-        #folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
-        #point = folder + id + "_keep.csv"
+#############CHARTING#####################
 
 
-        if removeduplicates:#TODO check that remove dulicates will not alter the row number
-            # remove duplicates and save to newfile, set name for point file
-            df = utils.remove_duplicates(point, ["lat", "lon"], operation="mean")
-            point = folder + id + "_keep_nodup.csv"
-            df.to_csv(point)
-
-        df = pd.read_csv(point, usecols=["id", "row", "a", "b", "c", "d", "raw_fruit_count", "visible_fruit_per_m"])
-
-        # 2 extract
-
-
-        # define a list of files
-        rasters = [folder + id + "_" + y + "_step" + str(x) + ".tiff" for x in step for y in colorgrade]
-        rasters2 = [folder + id + "_" + y + "_step" + str(x) + ".tiff" for x in step for y in counts]
-
-        spatialRef = osr.SpatialReference()
-        spatialRef.ImportFromEPSG(epsg)
-        srs = spatialRef.ExportToProj4()
-        vrtdict = {"layername": os.path.basename(point).split(".")[0], "fullname": point, "easting": "lon",
-                   "northing": "lat", "srs": srs}
-
-        c = []
-        for r in rasters:
-            stat = utils2.compare_csvpoint_cell(point, r, vrtdict, overwrite=False)
-            c.append(stat)
-
-        arr = np.transpose(np.asarray(c))
-        newdf = pd.DataFrame(arr, columns=["step" + str(x) + y for x in step for y in colorgrade])
-
-        c = []
-        for r in rasters2:
-            stat = utils2.compare_csvpoint_cell(point, r, vrtdict, overwrite=False)
-            c.append(stat)
-
-        arr = np.transpose(np.asarray(c))
-        newdf2 = pd.DataFrame(arr, columns=["step" + str(x) + y for x in step for y in counts])
-
-        outdf = pd.concat([df, newdf, newdf2], axis=1)
-
-        if clean: # clean the dataframe, useful to hide nodata values in the result  e.g convert -1 with 0
-            utils.clean_dataframe(outdf, clean[0], clean[1]) # TODO check the use of  DataFrame.replace
-
-        outdf.to_csv(folder + id + "_ERRORSTATISTICS.csv")
-
-
-def test_compare_raster_totruth_byrow(point, id, folder, epsg=32611, step=[2, 3, 4, 5, 6, 7, 8, 9, 10], removeduplicates=True,
-                                clean=None, tempfolder="/temprasters/", colorgrade=None, counts=None):
-
-    """
-    comparing original point values with the underlying pixel values and save comparison to disk
-    use this when the workflow was using force_interpolation_by_row=True
-
-    :param point: this is the id +"_keep.csv" file
-    :param id: operation id
-    :param folder: the folder with point
-    :param epsg: epsg code for spatial reference
-    :param step: the steps to consider
-    :param removeduplicates: true to get average value for duplicate points
-    :param clean: chage first value with the second [[-1],[0]] , useful to clean nodata values
-    :param tempfolder: name of the folder storing the rasters by row
-    :return:
-    """
-
-
-    # step = [2, 3, 4,10]
-    if not colorgrade:
-        colorgrade = ["a", "b", "c", "d"]
-    if not counts:
-        counts = ["raw", "visible"]
-
-    # 1 open  csv
-    # id = "a16b2a828b9174d678e76be46619eb329"
-    # folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
-    # point = folder + id + "_keep.csv"
-
-    if removeduplicates:  # TODO check that remove dulicates will not alter the row number
-        # remove duplicates and save to newfile, set name for point file
-        df = utils.remove_duplicates(point, ["lat", "lon"], operation="mean")
-        point = folder + id + "_keep_nodup.csv"
-        df.to_csv(point, index=False)
-
-    df = pd.read_csv(point, usecols=["id", "row", "a", "b", "c", "d", "raw_fruit_count", "visible_fruit_per_m","lat","lon"])
-    # find unique row numbers
-    rows = sorted(df["row"].unique())
-    #filter by row and save to tempfolder
-    for row in rows:
-        row = int(row)
-        rowdf = df[df["row"] == row]
-        # save csv file to disk
-        rowdf.to_csv(folder + "/temprasters/" + id + "_keep_row" + str(row) + ".csv", index=False)
-    df.drop(["lat", "lon"] , axis=1, inplace=True) #we dont want in the final result
-
-    # 2 extract
-    # define a dictionary of files
-    rasters = {}
-    rasters2 = {}
-    for row in rows:
-        row = int(row)
-        #this will be in order a,b,c,d   and raw,visible
-        rasters[row] = [folder + tempfolder + id + "_" + y + "_step" + str(x) + "_row" + str(row) + ".tiff" for x in step for y in colorgrade]
-        rasters2[row] = [folder + tempfolder + id + "_" + y + "_step" + str(x) + "_row" + str(row) + ".tiff" for x in step for y in counts]
-
-    #define a gdal spatial reference object
-    spatialRef = osr.SpatialReference()
-    spatialRef.ImportFromEPSG(epsg)
-    srs = spatialRef.ExportToProj4()
-
-    c = []
-    for row in rows:
-        row = int(row)
-        orig_points = folder + "/temprasters/" + id + "_keep_row" + str(row) + ".csv"
-        vrtdict = {"layername": os.path.basename(orig_points).split(".")[0], "fullname": orig_points, "easting": "lon",
-                   "northing": "lat", "srs": srs}
-        raster_row = []
-        for r in rasters[row]:
-            stat = utils2.compare_csvpoint_cell(orig_points, r, vrtdict, overwrite=True)
-            raster_row.append(stat) #this will be a linear collecion of values step2a, step2b,....
-        c.append(np.transpose(np.asarray(raster_row)))
-
-    # we stack vertically all the rows and convert to dataframe
-    arr_colour = np.vstack(c)
-    newdf = pd.DataFrame(arr_colour, columns=["step" + str(x) + y for x in step for y in colorgrade])
-
-    c = []
-    for row in rows:
-        row = int(row)
-        orig_points = folder + "/temprasters/" + id + "_keep_row" + str(row) + ".csv"
-        vrtdict = {"layername": os.path.basename(orig_points).split(".")[0], "fullname": orig_points, "easting": "lon",
-                   "northing": "lat", "srs": srs}
-        raster_row = []
-        for r in rasters2[row]:
-            #overwrite false because we already have the shapefiles
-            stat = utils2.compare_csvpoint_cell(orig_points, r, vrtdict, overwrite=False)
-            raster_row.append(stat)
-        c.append(np.transpose(np.asarray(raster_row)))
-
-    arr_count = np.vstack(c)
-    newdf2 = pd.DataFrame(arr_count, columns=["step" + str(x) + y for x in step for y in counts])
-
-    #stack the 3 dataframe horizontally
-    outdf = pd.concat([df, newdf, newdf2], axis=1)
-
-    if clean:  # clean the dataframe, useful to hide nodata values in the result  e.g convert -1 with 0
-        utils.clean_dataframe(outdf, clean[0], clean[1])  # TODO check the use of  DataFrame.replace
-
-    outdf.to_csv(folder + id + "_ERRORSTATISTICS.csv", index=False)
-
-
-
-def estimate_berries_byrow(id, folder, step=[2, 3, 4, 5, 6, 7, 8, 9, 10]):
-
-    """ Output comparison between original points and interploated points for average, std, estimated number per row
-    :param id: 
-    :param folder: 
-    :param step: 
-    :return: 
-    """
-
-    left_fields = ["row","length","visible_m_avg_original","visible_m_std_original","estimated_berries_original"]
-    right_fields = ["visible_m_avg", "delta_avg", "visible_std", "delta_std", "estimated_berries", "delta_estimates"]
-
-
-    # calculate row length
-    lengths = utils.row_length(folder + id + "_keep.csv", "lon", "lat", "row", conversion_factor=1)
-    # initialize output array
-    out = np.zeros((lengths.shape[0], 5 + (len(steps)+1)*6))
-    out[:,0:2] = lengths
-
-    # open  _ERRORSTATISTICS and calculate average and std per row for the visible count
-    path = folder + id + "_ERRORSTATISTICS.csv"
-    df = pd.read_csv(path, usecols=['row', 'visible_fruit_per_m'])
-
-    # open one of the files with the statistics for the rasterized data
-    path = folder + id + "_d_output.csv"
-    df2 = pd.read_csv(path)
-
-    #gey statistics for original points and rasterized points
-    rows = lengths[:,0]
-    for i,row in enumerate(rows):
-        # select one vineyard row
-        fdf = df[df['row'] == row]
-
-        out[i, 2] = fdf['visible_fruit_per_m'].mean()
-        out[i, 3] = fdf['visible_fruit_per_m'].std()
-        out[i, 4] = out[i, 1] * out[i, 2]
-
-        out[i, 5] = df2["visible_avg"].values[i]
-        out[i, 6] = np.absolute(out[i, 5] - out[i, 2])
-        out[i, 7] = df2["visible_std"].values[i]
-        out[i, 8] = np.absolute(out[i, 7] - out[i, 3])
-        out[i, 9] = out[i, 1] * out[i, 5]
-        out[i, 10] = np.absolute(out[i, 9] -  out[i, 4])
-
-    # get statistics for interpolated filtered points
-    idxstart = 11
-    for s in step:
-        for i, row in enumerate(rows):
-            out[i, idxstart] = df2[ "step"+str(s)+"_visible_avg"].values[i]
-            out[i, idxstart+1] = np.absolute(out[i, idxstart] - out[i, 2])
-            out[i, idxstart+2] = df2["step"+str(s)+"_visible_std"].values[i]
-            out[i, idxstart+3] = np.absolute(out[i, idxstart+2] - out[i, 3])
-            out[i, idxstart+4] = out[i, 1] * out[i, idxstart]
-            out[i, idxstart+5] = np.absolute(out[i, idxstart+4] - out[i, 4])
-        idxstart += len(right_fields)
-
-    # save array to disk
-    cols = left_fields + right_fields
-    cols += ["step"+str(x)+"_"+ i  for x in step for i in right_fields ]
-    outcols = ','.join(cols)
-    np.savetxt(folder + id + "_count_stats_byrow.csv", out, fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='',
-               comments='')
-
-
-def chart_rmse(folder,id):
-    """Chart the rmse
-    :param folder: 
-    :param id: 
-    :return: 
+def chart_rmse(folder,id, useperc=True):
+    """Output charts for rmse delta_avg number of berries   and  delta_estimates number of berries
+    :param folder:
+    :param id:
+    :param useperc: True to output percentages, else output the step
+    :return: None
     """
 
     from bokeh.plotting import figure
@@ -2119,33 +2146,37 @@ def chart_rmse(folder,id):
     #the categorical labels for x axis (step2,step3,step4,....)
     x_labels = [i.split("_")[0] for i in df.columns][:int(len(df.columns) / 2)]
 
+    #convert to percentage
+    if useperc:
+        x_labels = [str(int(1/int(i[4:])*100))+"%" for i in x_labels]
+
     #make new chart directory if it does not exist
     if not os.path.exists(folder +"/charts"):
         os.mkdir(folder + "/charts")
 
     #chart ["stepx_delta_avg_rmse"]
     output_file(folder + "/charts/delta_avg_rmse.html",title="delta_avg_rmse")
-    f = figure(x_range=x_labels)
+    f = figure(x_range=x_labels, title="Delta RMSE for average number of berries per vineyard row")
     f.line(x_labels , df.values[0,0:int(ncols/2)], line_width=2)
     save(f)
 
     #chart ("stepx_delta_estimates_rmse")
     output_file(folder + "/charts/delta_estimates_rmse.html",title="delta_estimates_rmse")
-    f = figure(x_range=x_labels)
+    f = figure(x_range=x_labels, title="Delta RMSE for total number of berries per vineyard row")
     f.line(x_labels , df.values[0,int(ncols/2):], line_width=2)
     save(f)
 
-def chart_estimated_berries(id, folder, steps=[2]):
-
-    """
-    Chart the estimated berries
-    :param id:
-    :param folder:
-    :param steps:
-    :return:
+def chart_estimated_berries(folder,id, steps=[], useperc=True):
+    """Output charts of the estimated berries original data vs filtered data
+    :param folder: folder path
+    :param id: operation id
+    :param steps: list with steps to consider
+    :param useperc: True to label steps as percentages
+    :return: None
     """
     from bokeh.plotting import figure
     from bokeh.io import output_file,  save
+    from bokeh.models import NumeralTickFormatter
 
     path = folder + id + "_count_stats_byrow.csv"
 
@@ -2161,18 +2192,322 @@ def chart_estimated_berries(id, folder, steps=[2]):
     if not os.path.exists(folder +"/charts/estimatedberries"):
         os.mkdir(folder + "/charts/estimatedberries")
 
-    for s in steps:
+    steps_perc = [int(1 / int(s) * 100) for s in steps] if useperc else steps
 
-        output_file(folder +"/charts/estimatedberries/estimated_step"+str(s)+".html")
-        f = figure(title='Estimeted berries: original VS step'+str(s))
+    for i,s in enumerate(steps):
+        output_file(folder +"/charts/estimatedberries/estimated_step"+str(s)+".html", title = "estimated_step"+str(s))
+        f = figure(title='Estimated berries: original VS '+str(steps_perc[i])+"%") if useperc else \
+            figure(title='Estimated berries: original VS step'+str(s))
         f.line(df["row"], df["estimated_berries"], line_color="green", line_width=1, legend="Original")
-        f.line(df["row"], df["step"+str(s)+"_estimated_berries"], line_color="red", line_width=1, legend="Step"+str(s))
+        f.line(df["row"], df["step"+str(s)+"_estimated_berries"], line_color="red", line_width=1, legend=str(steps_perc[i])+"%" if useperc else "Step"+str(s))
         f.legend.location = "top_left"
+        f.yaxis.formatter = NumeralTickFormatter(format="00")
+        f.xaxis.axis_label = "vineyard rows"
+        f.yaxis.axis_label = "number of berries"
         save(f)
 
 
+def chart_estimates_comparison(folder, id, steps=[], useperc=True):
+    """
+    Chart statistics by row for estimated berries
+
+    -estimated berries vs originals
+    -delta averages vs delta standard deviations
+    -delta averages vs delta standard deviations (areas in one chart)
+
+    starting file is the _count_stats_byrow.csv
+
+    """
+
+    from sklearn import linear_model
+    from bokeh.plotting import figure
+    from bokeh.io import output_file,  save
+    from bokeh.models import NumeralTickFormatter, Label
+    from bokeh.palettes import d3
+    from scipy.spatial import ConvexHull
 
 
+    if len(steps)>19:
+        raise ValueError("number of steps cannot be more than 19")
+
+    #####################################
+    ###estimated berries vs originals
+
+
+    cols = ["estimated_berries_original", "estimated_berries","delta_avg","delta_std" ] + ["step" + str(x) + "_" + "estimated_berries" for x in  steps] \
+           + ["step" + str(x) + "_" + "delta_avg" for x in steps] + ["step" + str(x) + "_" + "delta_std" for x in steps]
+
+    path = folder + id + "_count_stats_byrow.csv"
+    df = pd.read_csv(path, usecols=cols)
+
+
+    #make new chart directory if it does not exist
+    if not os.path.exists(folder +"/charts"):
+        os.mkdir(folder + "/charts")
+
+    #make new chart directory if it does not exist
+    if not os.path.exists(folder +"/charts/estimatedberries"):
+        os.mkdir(folder + "/charts/estimatedberries")
+
+    #make new chart directory if it does not exist
+    if not os.path.exists(folder +"/charts/estimatedberries/estimatedberries_comparisons"):
+        os.mkdir(folder + "/charts/estimatedberries/estimatedberries_comparisons")
+
+    #output chart for original vs no interpolation
+
+    model = linear_model.LinearRegression()
+    X, y = df["estimated_berries_original"].values.reshape( df.shape[0],1), df["estimated_berries"].values.reshape( df.shape[0],1)
+    model.fit(X, y)
+    rsquared = model.score(X, y)
+
+    output_file(folder +"/charts/estimatedberries/estimatedberries_comparisons/estimated_nofilter.html", title = "estimated_nofilter")
+    f = figure(title="Estimated berries: original VS no filter")
+    f.circle(df["estimated_berries_original"], df["estimated_berries"], fill_color="red", line_color="red")
+
+    f.line(df["estimated_berries_original"], model.predict(df["estimated_berries_original"].values.reshape( df.shape[0],1))[:,0], line_color="blue")
+
+    f.yaxis.formatter = NumeralTickFormatter(format="00")
+    f.xaxis.formatter = NumeralTickFormatter(format="00")
+    f.xaxis.axis_label = "estimated berries original"
+    f.yaxis.axis_label = "estimated berries no_filter"
+
+    citation = Label(x=df["estimated_berries"].min(), y= df["estimated_berries"].max() , x_units='data', y_units='data',
+                     text="R-Squared = %.3f"%rsquared, border_line_color='black', border_line_alpha=1.0,
+                     background_fill_color="white", background_fill_alpha=1.0)
+
+    f.add_layout(citation)
+    save(f)
+
+    steps_perc = [int(1 / int(s) * 100) for s in steps] if useperc else steps
+
+    #iterate steps and output original VS interpolated
+
+    for i,s in enumerate(steps):
+
+        X, y = df["estimated_berries_original"].values.reshape(df.shape[0], 1), \
+               df["step" + str(s) + "_" + "estimated_berries"].values.reshape(df.shape[0], 1)
+        model.fit(X, y)
+        rsquared = model.score(X, y)
+
+        output_file(folder + "/charts/estimatedberries/estimatedberries_comparisons/estimated_step"+str(s)+".html", title="estimated_step"+str(s)+".html")
+
+        f = figure(title="Estimated berries: original VS "+str(steps_perc[i])+"% dataset") if useperc else  \
+            figure(title="Estimated berries: original VS step"+str(s))
+
+        f.circle(df["estimated_berries_original"], df["step" + str(s) + "_" +"estimated_berries"], fill_color="red", line_color="red")
+
+        f.line(df["estimated_berries_original"],
+               model.predict(df["estimated_berries_original"].values.reshape(df.shape[0], 1))[:, 0], line_color="blue")
+
+        f.yaxis.formatter = NumeralTickFormatter(format="00")
+        f.xaxis.formatter = NumeralTickFormatter(format="00")
+        f.xaxis.axis_label = "estimated berries original"
+        f.yaxis.axis_label = "estimated berries " + str(steps_perc[i]) + "% dataset" if useperc else "estimated berries " +"step " + str(s)
+
+        citation = Label(x=df["estimated_berries"].min(), y=df["estimated_berries"].max(), x_units='data',
+                         y_units='data', text="R-Squared = %.3f" % rsquared, border_line_color='black', border_line_alpha=1.0,
+                         background_fill_color="white", background_fill_alpha=1.0)
+
+        f.add_layout(citation)
+        save(f)
+
+    ###################################################################################
+    ##edlta averages vs delta standard deviations
+
+    #make new chart directory if it does not exist
+    if not os.path.exists(folder +"/charts/estimatedberries/estimatedberries_deltas"):
+        os.mkdir(folder + "/charts/estimatedberries/estimatedberries_deltas")
+
+    output_file(folder +"/charts/estimatedberries/estimatedberries_deltas/estimated_deltas_nofilter.html", title = "estimated_deltas_nofilter")
+    f = figure(title="Delta average VS Delta std  |  no filter")
+
+    f.circle(df["delta_avg"], df["delta_std"], fill_color="red", line_color="red")
+
+    f.yaxis.formatter = NumeralTickFormatter(format="00")
+    f.xaxis.formatter = NumeralTickFormatter(format="00")
+    f.xaxis.axis_label = "delta average"
+    f.yaxis.axis_label = "delta std"
+
+    save(f)
+
+    #iterate steps and output original VS interpolated
+
+    for i,s in enumerate(steps):
+
+        output_file(folder + "/charts/estimatedberries/estimatedberries_deltas/estimated_step"+str(s)+".html", title="estimated_step"+str(s)+".html")
+
+        f = figure(title="Delta average VS Delta std  |  "+str(steps_perc[i])+"% dataset") if useperc else  \
+            figure(title="Delta average VS Delta std  |  step"+str(s))
+
+        f.circle(df["step" + str(s) + "_" +"delta_avg"], df["step" + str(s) + "_" +"delta_std"], fill_color="red", line_color="red")
+
+        f.yaxis.formatter = NumeralTickFormatter(format="00")
+        f.xaxis.formatter = NumeralTickFormatter(format="00")
+        f.xaxis.axis_label = "delta average"
+        f.yaxis.axis_label = "delta std"
+
+        save(f)
+
+    ######show delta areas in one chart
+
+    colors = d3['Category20'][len(steps)+1]
+
+    output_file(folder + "/charts/estimatedberries/estimatedberries_deltas/estimated_comparisons.html",
+                title="estimated_comparisons.html")
+    f = figure(title="Delta average VS Delta std")
+
+    points = df[["delta_avg", "delta_std"]].values
+    hull = ConvexHull(points)
+    f.patch(points[hull.vertices,0], points[hull.vertices,1], line_alpha=1, fill_alpha=0.0, line_width=2,color=colors[0], legend="No filter")
+
+    for i,s in enumerate(steps):
+        points = df[["step" + str(s) + "_" +"delta_avg", "step" + str(s) + "_" +"delta_std"]].values
+        hull = ConvexHull(points)
+        f.patch(points[hull.vertices,0], points[hull.vertices,1], line_alpha=1, fill_alpha=0.0, line_width=2,color=colors[i+1],
+                legend=str(steps_perc[i])+"%" if useperc else "Step"+ str(s))
+    f.yaxis.formatter = NumeralTickFormatter(format="0")
+    f.xaxis.formatter = NumeralTickFormatter(format="0")
+    f.xaxis.axis_label = "delta average"
+    f.yaxis.axis_label = "delta std"
+    save(f)
+
+
+def chart_visible_berries(folder,id, steps=[], useperc=True):
+    """Chart  visible berries per meter (all points vs interpolated)
+
+    data source is _ERRORSTATISTICS.csv
+
+    :param folder:
+    :param id:
+    :param steps:
+    :param useperc:
+    :return:
+    """
+
+    from sklearn import linear_model
+    from bokeh.plotting import figure
+    from bokeh.io import output_file,  save
+    from bokeh.models import NumeralTickFormatter, Label
+
+    cols = ["visible_fruit_per_m"] + [ "step"+str(s)+"visible" for s in steps]
+
+    path = folder + id + "_ERRORSTATISTICS.csv"
+    df = pd.read_csv(path, usecols=cols)
+
+    #make new chart directory if it does not exist
+    if not os.path.exists(folder +"/charts"):
+        os.mkdir(folder + "/charts")
+
+    #make new chart directory if it does not exist
+    if not os.path.exists(folder +"/charts/estimatedberries"):
+        os.mkdir(folder + "/charts/estimatedberries")
+
+    #make new chart directory if it does not exist
+    if not os.path.exists(folder +"/charts/estimatedberries/estimatedberries_all_comparisons"):
+        os.mkdir(folder + "/charts/estimatedberries/estimatedberries_all_comparisons")
+
+    steps_perc = [int(1 / int(s) * 100) for s in steps] if useperc else steps
+
+    model = linear_model.LinearRegression()
+
+    for i,s in enumerate(steps):
+
+        X, y = df["visible_fruit_per_m"].values.reshape(df.shape[0], 1), \
+               df["step"+str(s)+"visible"].values.reshape(df.shape[0], 1)
+        model.fit(X, y)
+        rsquared = model.score(X, y)
+
+        output_file(folder + "/charts/estimatedberries/estimatedberries_all_comparisons/estimated_step"+str(s)+".html", title="estimated_step"+str(s)+".html")
+
+        f = figure(title="Visible berries per meter: original VS "+str(steps_perc[i])+"% dataset") if useperc else  \
+            figure(title="Visible berries per meter: original VS step"+str(s))
+
+        f.circle(df["visible_fruit_per_m"], df["step"+str(s)+"visible"], fill_color="red", line_color="red")
+
+        f.line(df["visible_fruit_per_m"],
+               model.predict(df["visible_fruit_per_m"].values.reshape(df.shape[0], 1))[:, 0], line_color="blue")
+
+        f.yaxis.formatter = NumeralTickFormatter(format="00")
+        f.xaxis.formatter = NumeralTickFormatter(format="00")
+        f.xaxis.axis_label = "Visible berries per meter original"
+        f.yaxis.axis_label = "Visible berries per meter " + str(steps_perc[i]) + "% dataset" if useperc else "estimated berries " +"step " + str(s)
+
+        citation = Label(x=df["visible_fruit_per_m"].min(), y=df["step"+str(s)+"visible"].max(), x_units='data',
+                         y_units='data', text="R-Squared = %.3f" % rsquared, border_line_color='black', border_line_alpha=1.0,
+                         background_fill_color="white", background_fill_alpha=1.0)
+
+        f.add_layout(citation)
+        save(f)
+
+def chart_colorgrades(folder,id, colors=[], steps=[], useperc=True):
+    """Chart  colorgrade values (all points vs interpolated)
+
+    data source is _ERRORSTATISTICS.csv
+
+    :param folder:
+    :param id:
+    :param steps:
+    :param useperc:
+    :return:
+    """
+
+    from sklearn import linear_model
+    from bokeh.plotting import figure
+    from bokeh.io import output_file,  save
+    from bokeh.models import NumeralTickFormatter, Label
+
+    cols = colors + ["step"+str(s)+ c.lower() for s in steps for c in colors]
+
+    path = folder + id + "_ERRORSTATISTICS.csv"
+    df = pd.read_csv(path, usecols=cols)
+
+    #make new chart directory if it does not exist
+    if not os.path.exists(folder +"/charts"):
+        os.mkdir(folder + "/charts")
+
+    # make new chart directory if it does not exist
+    if not os.path.exists(folder + "/charts/colorgrades"):
+        os.mkdir(folder + "/charts/colorgrades")
+
+    for cl in colors:
+        #make new chart directory if it does not exist
+        if not os.path.exists(folder +"/charts/colorgrades/colors"+cl.upper()+"_all_comparisons"):
+            os.mkdir(folder + "/charts/colorgrades/colors"+cl.upper()+"_all_comparisons")
+
+    steps_perc = [int(1 / int(s) * 100) for s in steps] if useperc else steps
+
+    model = linear_model.LinearRegression()
+
+    for cl in colors:
+
+        for i,s in enumerate(steps):
+
+            X, y = df[cl.lower()].values.reshape(df.shape[0], 1), \
+                   df["step"+str(s)+cl.lower()].values.reshape(df.shape[0], 1)
+            model.fit(X, y)
+            rsquared = model.score(X, y)
+
+            output_file(folder + "/charts/colorgrades/colors"+cl.upper()+"_all_comparisons/color"+cl.upper()+"_step"+str(s)+".html", title="color"+cl.upper()+"_step"+str(s)+".html")
+
+            f = figure(title="Colorgrade"+cl.upper()+": original VS "+str(steps_perc[i])+"% dataset") if useperc else  \
+                figure(title="Colorgrade"+cl.upper()+": original VS step"+str(s))
+
+            f.circle(df[cl.lower()], df["step"+str(s)+cl.lower()], fill_color="red", line_color="red")
+
+            f.line(df[cl.lower()],
+                   model.predict(df[cl.lower()].values.reshape(df.shape[0], 1))[:, 0], line_color="blue")
+
+            f.yaxis.formatter = NumeralTickFormatter(format="0.000")
+            f.xaxis.formatter = NumeralTickFormatter(format="0.000")
+            f.xaxis.axis_label = "Colorgrade"+cl.upper()+" original"
+            f.yaxis.axis_label = "Colorgrade"+cl.upper()+" " + str(steps_perc[i]) + "% dataset" if useperc else "Colorgrade"+cl.upper()+ " step " + str(s)
+
+            citation = Label(x=df[cl.lower()].min(), y=df["step"+str(s)+cl.lower()].max(), x_units='data',
+                             y_units='data', text="R-Squared = %.3f" % rsquared, border_line_color='black', border_line_alpha=1.0,
+                             background_fill_color="white", background_fill_alpha=1.0)
+
+            f.add_layout(citation)
+            save(f)
 
 
 if __name__ == "__main__":
@@ -2204,24 +2539,23 @@ if __name__ == "__main__":
 
     #id = "a5d75134d88a843f388af925670d89772"
     #folder = "/vagrant/code/pysdss/data/output/text/workflow1/movingaverage/"+ id + "/"
-    #estimate_berries_byrow(id, folder)
+    #estimate_berries_byrow(folder,id)
 
 
     #id = "a9dd672655abb4188b6d8ac2cc830b3e4"
     #folder = "/vagrant/code/pysdss/data/output/text/workflow1/inversedistancetopower/190517/" + id + "/"
-    #estimate_berries_byrow(id, folder)
+    #estimate_berries_byrow(folder,id)
     #calculate_rmse(folder, id)
 
     #id = "a5d75134d88a843f388af925670d89772"
     #folder = "/vagrant/code/pysdss/data/output/text/workflow1/movingaverage/" + id + "/"
-    #estimate_berries_byrow(id, folder)
+    #estimate_berries_byrow(folder,id)
     #calculate_rmse(folder, id)
 
     ##output plots
     #id = "a5d75134d88a843f388af925670d89772"
     #folder = "/vagrant/code/pysdss/data/output/text/workflow1/movingaverage/" + id + "/"
     #chart_rmse(folder,id)
-
 
 
     '''
@@ -2237,7 +2571,7 @@ if __name__ == "__main__":
     point = folder + id + "_keep.csv"
     test_compare_raster_totruth(point, id, folder, step=steps, clean=[[-1], [0]])
     calculate_rmse_row(folder, id, nsteps=steps)
-    estimate_berries_byrow(id, folder,step=steps)
+    estimate_berries_byrow(folder,id,step=steps)
     calculate_rmse(folder,id,nsteps=steps)
     chart_rmse(folder, id)
 
@@ -2248,7 +2582,7 @@ if __name__ == "__main__":
     point = folder + id + "_keep.csv"
     test_compare_raster_totruth(point, id, folder, step=steps, clean=[[-1], [0]])
     calculate_rmse_row(folder, id, nsteps=steps)
-    estimate_berries_byrow(id, folder, step=steps)
+    estimate_berries_byrow(folder,id, step=steps)
     calculate_rmse(folder, id, nsteps=steps)
     chart_rmse(folder, id)
     #######################################
@@ -2261,7 +2595,7 @@ if __name__ == "__main__":
     point = folder + id + "_keep.csv"
     test_compare_raster_totruth(point, id, folder, step=steps, clean=[[-1], [0]])
     calculate_rmse_row(folder, id, nsteps=steps)
-    estimate_berries_byrow(id, folder, step=steps)
+    estimate_berries_byrow(folder,id, step=steps)
     calculate_rmse(folder, id, nsteps=steps)
     chart_rmse(folder, id)
 
@@ -2273,7 +2607,7 @@ if __name__ == "__main__":
     point = folder + id + "_keep.csv"
     test_compare_raster_totruth(point, id, folder, step=steps, clean=[[-1], [0]])
     calculate_rmse_row(folder, id, nsteps=steps)
-    estimate_berries_byrow(id, folder, step=steps)
+    estimate_berries_byrow(folder,id, step=steps)
     calculate_rmse(folder, id, nsteps=steps)
     chart_rmse(folder, id)
     #######################################
@@ -2288,7 +2622,7 @@ if __name__ == "__main__":
     point = folder + id + "_keep.csv"
     test_compare_raster_totruth_byrow(point, id, folder,step=steps, clean=[[-1],[0]])
     calculate_rmse_row(folder, id, nsteps=steps)
-    estimate_berries_byrow(id, folder, step=steps)
+    estimate_berries_byrow(folder,id, step=steps)
     calculate_rmse(folder, id, nsteps=steps)
     chart_rmse(folder, id)
 
@@ -2301,7 +2635,7 @@ if __name__ == "__main__":
     point = folder + id + "_keep.csv"
     test_compare_raster_totruth_byrow(point, id, folder,step=steps, clean=[[-1],[0]])
     calculate_rmse_row(folder, id, nsteps=steps)
-    estimate_berries_byrow(id, folder, step=steps)
+    estimate_berries_byrow(folder,id, step=steps)
     calculate_rmse(folder, id, nsteps=steps)
     chart_rmse(folder, id)
 
@@ -2316,7 +2650,7 @@ if __name__ == "__main__":
     point = folder + id + "_keep.csv"
     test_compare_raster_totruth_byrow(point, id, folder,step=steps, clean=[[-1],[0]])
     calculate_rmse_row(folder, id, nsteps=steps)
-    estimate_berries_byrow(id, folder, step=steps)
+    estimate_berries_byrow(folder,id, step=steps)
     calculate_rmse(folder, id, nsteps=steps)
     chart_rmse(folder, id)
 
@@ -2329,15 +2663,21 @@ if __name__ == "__main__":
     point = folder + id + "_keep.csv"
     test_compare_raster_totruth_byrow(point, id, folder,step=steps, clean=[[-1],[0]])
     calculate_rmse_row(folder, id, nsteps=steps)
-    estimate_berries_byrow(id, folder, step=steps)
+    estimate_berries_byrow(folder,id, step=steps)
     calculate_rmse(folder, id, nsteps=steps)
     chart_rmse(folder, id)
     '''
 
+
+    ####################################
+
     steps = [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
+    grades=['a','b','c','d']
+
     id= "a40b9fc7181184bf0b9835f830a677513"
     folder = "/vagrant/code/pysdss/data/output/text/analysis0806_steps2to100/" + id + "/"
-    chart_estimated_berries(id, folder, steps=steps)
-
-
-
+    chart_rmse(folder,id,useperc=True)
+    chart_estimated_berries(folder,id, steps=steps, useperc=True)
+    chart_estimates_comparison(folder, id, steps=steps)
+    chart_visible_berries(folder, id, steps=steps)
+    chart_colorgrades(folder,id,grades,steps, useperc=True)

@@ -59,7 +59,7 @@ from pysdss.geostat import kriging as krig
 ##add parameter to force inteerpolation for points in the same row only (for higher filters the interpolation radius will
 ##overlap with points belonging to adjacent rows
 
-#so there are 8 possibilities for each interpolation method (so far inverse distance and moving average, kriging will follow)
+#so there are 8 possibilities for each interpolation method
 # ordered filter, first/last, free interpolation
 # ordered filter, no first/last, free interpolation
 # ordered filter, first/last, interpolation by row only
@@ -70,29 +70,20 @@ from pysdss.geostat import kriging as krig
 # random filter, no first/last, interpolation by row only
 
 
-#for random filter the radius is calculated with the max distance between points on the same row
+#for random filter the interpolation radius is calculated with the max distance between points on the same row
 
 
-#for the inverse distance at present the power is set to the default value 2, the interpolation should be repeated for
-#different power values and then root mean square error should be calculated to decide the optimal radius
-#actually it should be also possible to experiment different radius setting, therefore creating a matrix radius/power
+#the interpolation radius is used for the semivariogram lags max distance
 
 
-#           pow1    pow2    pow3    ...
-#   radius1  x       x       x
-#   radius2  x       x       x      ...
-#   radius3  x       x       x      ...
-#   radius4  x       x       x      ...
-
-
-def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, first_last=False, force_interpolation_by_row=False, nodata=-1,
+def berrycolor_workflow_kriging(steps=[30], interp="simple", random_filter=False, first_last=False, force_interpolation_by_row=False, nodata=-1.0,
                           variogram = "global",rowdirection="x", epsg="32611", id = "adca0a053062b45da8a20e0a0d4b4fe54", skip=True):
     """
     similar to interpolate_and_filter but here as input i am using the original csv file and I am considering the
     number of berries as well
 
     steps: the filtering steps to use
-    interp: the interpolation method to use on the filtered data   "simple" or "ordinary", kriging will be added later
+    interp: the interpolation method to use on the filtered data   "simple" or "ordinary",
     random filter:   true to take random points (e,g step2 takes 50% random points for each row, false use ordered filter
     (e.g. step2 takes 1 point every 2 points)
     first_last: true to always have the first and last point of a vineyard row
@@ -108,7 +99,10 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
     :return:
     """
 
+    rounddecimals = 4 #this is used to round the decimals in the result grids, this should limit overflows when calculating the statistics
 
+    if variogram == "byrow":
+        raise NotImplementedError("variogram by row is not implemented")
 
     if variogram == "local":
         #raise NotImplementedError("local variogram is not implemented")
@@ -181,8 +175,6 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
     filter.set_field_value(discard, north,"lat")
     filter.set_field_value(discard, 0, "keepd")
     discard.to_csv(folder + id +"_discard.csv",index=False)'''
-
-
 
 
     # 4 create the virtualdataset header for the datafile
@@ -434,6 +426,10 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                     stats[step][clr][row]['truth'] = []
                     stats[step][clr][row]['interpolated'] = []
 
+
+            #############################
+            '''
+
             #load xml with columns
             with open(jsonpath + "/vrtmodel_row.txt") as f:
                 xml_row = f.read()
@@ -472,8 +468,77 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
             params["-tye"] = str(miny) + " " + str(maxy)
             params["-outsize"] = str(deltx * area_multiplier) + " " + str(delty * area_multiplier)
 
+            '''
+            ##############################
 
-            for clr in ["raw", "visible"]:
+
+            #calculate max distance between points, to make things easier I am not doing row by row
+            if random_filter: max_point_distance = utils.max_point_distance(k, "lon", "lat", "row", direction=rowdirection)
+
+            #extract the data to be used to build the variogram
+            vardata = k[["lon", "lat", "visible_fruit_per_m"]].values
+            varmean = np.mean( vardata[:, 2])
+
+            # here we calculate the global variogram for visible_fruit_per_m
+            if variogram == "global":
+
+                ####if not skip:
+                print("calculte global empirical semivariance")
+
+                #i set the hh to 5 neters and the max distance to the smallest field edge
+                #hh = 2
+                #lags = range(0,min(delty ,deltx), hh)
+                #lags = range(0, int((delty+deltx)/2), hh)
+
+                hh = 1 / area_multiplier
+                # set lags from 0 to the interpolation radius
+                # lags = range(0, int(radius), hh)
+
+                maxlagdistance = max_point_distance + 0.5 if random_filter else 0.5 * step
+                lags = np.arange(0, int( maxlagdistance*2), hh)
+
+                gamma = vrc.semivar2(vardata, lags, hh)
+                # covariance = vrc.covar(data, lags, hh)
+
+                # chart empirical semivariance and covariance
+                output_file(folder + id + "_semivariogram_step"+str(step)+".html")
+                f = figure()
+                f.line(gamma[0, :], gamma[1, :], line_color="green", line_width=2, legend="Semivariance")
+                f.square(gamma[0, :], gamma[1, :], fill_color=None, line_color="green", legend="Semivariance")
+                #f.line(cov[0, :], cov[1, :], line_color="red", line_width=2, legend="Covariance")
+                #f.square(cov[0, :], cov[1, :], fill_color=None, line_color="red", legend="Covariance")
+                f.legend.location = "top_left"
+                save(f)
+
+
+                print("fit semivariogram for visible_fruit_per_m step" + str(step))
+                # choose the model with lowest rmse (we use sphrical and exponential)
+                semivariograms = []
+                semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.spherical))
+                ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.linear))
+                ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.gaussian))
+                semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.exponential))
+                rsmes = [rmse(gamma[0], i(gamma[0])) for i in semivariograms]
+                semivariogram = semivariograms[rsmes.index(min(rsmes))]
+
+                # chart the fitted models
+                output_file(folder + id + "_semivariogram_step"+str(step)+"_fitted.html")
+                f = figure()
+                f.circle(gamma[0], gamma[1], fill_color=None, line_color="blue")
+                f.line(gamma[0], semivariogram(gamma[0]), line_color="red", line_width=2)
+                f.legend.location = "top_left"
+                save(f)
+
+                fileIO.save_object(folder + id + "_semivariogram_step"+str(step)+".var",semivariogram, usedill=True)
+
+                ####sys.exit()
+
+                ####else:
+                ####    semivariogram = fileIO.load_object(folder + id + "_semivariogram_step"+str(step)+".csv", usedill=True)
+
+
+
+            for clr in ["visible"]:
 
                 #for each row if random calculate the max distance for the current row
                 #execute gdalgrid for jus the row points
@@ -486,22 +551,29 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
 
                     # if random_filter we will set the radius to the max distance between points in a row
                     if random_filter: max_point_distance = utils.max_point_distance(rowdf, "lon", "lat", "row",
-                                                                                    direction=rowdirection,
-                                                                                    rem_duplicates=False)
+                                                                                    direction=rowdirection)
 
+                    ####################
+                    '''
                     if random_filter:  # if we have random points we set we set the radius to the max distance between points plus a buffer of 0.5
                         params["-a"]["radius1"] = str(max_point_distance + 0.5)
                         params["-a"]["radius2"] = str(max_point_distance + 0.5)
                     else:
                         params["-a"]["radius1"] = str(0.5 * step)
                         params["-a"]["radius2"] = str(0.5 * step)
+                    '''
+                    ########################
+                    if random_filter:
+                        radius = max_point_distance + 0.5
+                    else:
+                        radius = 0.5 * step
 
+                    ####################
+                    '''
                     #this will interpolate only the current row data
                     params["-where"] = "row="+ str(int(row))
-
                     params["src_datasource"] = folder + id + "_keep_" + clr + "_step" + str(step) + ".vrt"
                     params["dst_filename"] = tempfolder + id + "_" + clr + "_step" + str(step) + "_row"+str(row)+".tiff"
-
                     print(params)
 
                     # build gdal_grid request
@@ -517,11 +589,132 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                     if err:
                         print("error:" + err)
                         raise Exception("gdal grid failed")
+                    '''
+                    #####################
+
+
+
+                    # initialize the kdtree index for the current row
+                    xydata = rowdf[["lon", "lat"]].values
+                    tree = kdtree.cKDTree(xydata)
+
+                    vardata_row = rowdf[["lon", "lat", "visible_fruit_per_m"]].values
+                    varmean_row = np.mean(vardata_row[:, 2])
+
+                    # initialize grid as numpy array, filled in with nodata value (-1)
+                    grid = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
+                    grid_error = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
+
+
+                    #set mask for the current row
+                    mask = row_indexed == int(row)
+                    index0_masked= index[0][mask]
+                    index1_masked = index[1][mask]
+
+                    # get the number of pixels to iterate
+                    npixels = index0_masked.shape[0]
+
+                    for i in range(npixels):
+
+                        lonlat = gdal.ApplyGeoTransform(geotr, int(index1_masked[i]), int(index0_masked[i]))
+
+                        ###get the  nearest points inside the interpolation radius
+                        nearindexes = tree.query_ball_point(lonlat, radius, n_jobs=-1)
+                        # f.write(" "+str(len(nearindexes)))
+                        if not nearindexes:  # actually this shouldnt happen
+                            continue
+                        nearvardata = vardata_row[nearindexes]
+
+                        # this is the ighest value in the nearby row data, this is used th threshod the output
+                        vardatamax = nearvardata[:, 2].max()
+
+                        # if there is only 1 neighbour we take its value else we do kriging
+                        if len(nearindexes) == 1:
+                            # if len(idx) == 1:
+                            grid[index0_masked[i], index1_masked[i]] = nearvardata[0, 2]  # i did this otherwise kriging with 1 point will raise error
+                            grid_error[index0_masked, index1_masked[i]] = 0  # todo how to deal with the error?
+                        else:
+                            distance, idx = tree.query((lonlat[0], lonlat[1]), len(nearindexes))
+                            krigdata = np.hstack((nearvardata, np.expand_dims(distance, axis=0).T))
+
+                            if variogram == "local":
+                                pass
+                            if variogram == "byrow":
+                                pass
+
+                            if interp == "simple":
+                                try:
+                                    simple = krig.simple(krigdata, varmean_row, semivariogram)
+                                except Exception as e:
+                                    print(e, end='')  # TODO did this because of the singular matrix error
+                                else:
+                                    if simple[0] <= vardatamax * 2:  # TODO temporary patch to avoid outside range result
+                                        grid[index0_masked[i], index1_masked[i]] = simple[0]
+                                        grid_error[index0_masked[i], index1_masked[i]] = simple[1]
+
+                            else:  # ordinary
+                                try:
+                                    ordinary = krig.ordinary(krigdata, semivariogram)
+                                except Exception as e:
+                                    print(e, end='')  # TODO did this because of the singular matrix error
+                                else:
+                                    # TODO this is a temporary patch to avoid outside range result!
+                                    if ordinary[0] <= vardatamax * 2:
+                                        grid[index0_masked[i], index1_masked[i]] = ordinary[0]
+                                        grid_error[index0_masked[i], index1_masked[i]] = ordinary[1]
+
+                    # delete values less than zero and round the values
+                    grid[grid < 0] = nodata
+                    np.round(grid, rounddecimals, out=grid)
+
+                    outRaster = None
+                    try:
+                        #rastergrid = folder + id + "_visible_step" + str(step) + "_" + interp + variogram + ".tiff"
+                        rastergrid = tempfolder + id + "_" + clr + "_step" + str(step)+ "_" + interp + variogram + "_row" + str(row) + ".tiff"
+
+                        driver = gdal.GetDriverByName('GTiff')
+                        outRaster = driver.Create(rastergrid, deltx * area_multiplier,
+                                                  delty * area_multiplier, 1, gdal.GDT_Float32)
+                        outRaster.SetGeoTransform(geotr)
+                        outband = outRaster.GetRasterBand(1)
+                        outband.SetNoDataValue(nodata)
+                        # outband.WriteArray( np.flip(grid,0))
+                        outband.WriteArray(grid)
+                        outRasterSRS = osr.SpatialReference()
+                        outRasterSRS.ImportFromEPSG(int(epsg))
+                        outRaster.SetProjection(outRasterSRS.ExportToWkt())
+                        outband.FlushCache()
+                    finally:
+                        if outRaster: outRaster = None
+                    try:
+                        #rastergriderror = folder + id + "_visible_step" + str(step) + "_" + interp + variogram + "_error.tiff"
+                        rastergriderror = tempfolder + id + "_" + clr + "_step" + str(step)+ "_" + interp + variogram \
+                                          + "_error" + "_row" + str(row) + ".tiff"
+
+                        driver = gdal.GetDriverByName('GTiff')
+                        outRaster = driver.Create(rastergriderror, deltx * area_multiplier,
+                                                  delty * area_multiplier, 1, gdal.GDT_Float32)
+                        outRaster.SetGeoTransform(geotr)
+                        outband = outRaster.GetRasterBand(1)
+                        outband.SetNoDataValue(nodata)
+                        # outband.WriteArray( np.flip(grid_error,0))
+                        outband.WriteArray(grid)
+                        outRasterSRS = osr.SpatialReference()
+                        outRasterSRS.ImportFromEPSG(int(epsg))
+                        outRaster.SetProjection(outRasterSRS.ExportToWkt())
+                        outband.FlushCache()
+                    finally:
+                        if outRaster: outRaster = None
+
 
 
             # extract statistics for raw and visible
             for clr in ["a", "b", "c", "d"]:
+
+                print("calculate statistics for visble berrie step" + str(step) + "color" + clr)
                 for row in rows:
+
+                    '''
                     # upload to numpy
                     d = gdal.Open(tempfolder + id + "_raw_step" + str(step) + "_row"+str(row) + ".tiff")
                     band = d.GetRasterBand(1)
@@ -529,8 +722,9 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                     new_r_indexed_raw = gdalIO.apply_index_to_single_band(band,
                                                                           index)  # this is the last index from the fruit count
                     d = None
+                    '''
 
-                    d = gdal.Open(tempfolder + id + "_visible_step" + str(step) + "_row"+str(row) + ".tiff")
+                    d = gdal.Open(tempfolder + id + "_visible_step" + str(step) + "_" + interp + variogram + "_row" + str(row) + ".tiff")
                     band = d.GetRasterBand(1)
                     # apply index
                     new_r_indexed_visible = gdalIO.apply_index_to_single_band(band,
@@ -545,20 +739,23 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                     # average raw fruit count, std raw fruit count ,total visible fruitxm, average visible fruitXm, std visible fruitXm
 
                     stats[step][clr][row]['truth'] = [None, None, None, None, None,
-                                          r_indexed_raw[0, :][mask].sum(),
-                                          r_indexed_raw[0, :][mask].mean(),
-                                          r_indexed_raw[0, :][mask].std(),
+                                          #r_indexed_raw[0, :][mask].sum(),
+                                          #r_indexed_raw[0, :][mask].mean(),
+                                          #r_indexed_raw[0, :][mask].std(),
                                           r_indexed_visible[0, :][mask].sum(),
                                           r_indexed_visible[0, :][mask].mean(),
                                           r_indexed_visible[0, :][mask].std()]
 
                     stats[step][clr][row]['interpolated'] = [None, None, None, None, None,
-                                                 new_r_indexed_raw[mask].sum(),
-                                                 new_r_indexed_raw[mask].mean(),
-                                                 new_r_indexed_raw[mask].std(),
+                                                 #new_r_indexed_raw[mask].sum(),
+                                                 #new_r_indexed_raw[mask].mean(),
+                                                 #new_r_indexed_raw[mask].std(),
                                                  new_r_indexed_visible[mask].sum(),
                                                  new_r_indexed_visible[mask].mean(),
                                                  new_r_indexed_visible[mask].std()]
+
+
+
 
             for clr in ["a", "b", "c", "d"]:
 
@@ -575,6 +772,7 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                                                                                     direction=rowdirection,
                                                                                     rem_duplicates=False)
 
+                    '''
                     if random_filter:  # if we have random points we set we set the radius to the max distance between points plus a buffer of 0.5
                         params["-a"]["radius1"] = str(max_point_distance + 0.5)
                         params["-a"]["radius2"] = str(max_point_distance + 0.5)
@@ -601,13 +799,137 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                     if err:
                         print("error:" + err)
                         raise Exception("gdal grid failed")
+                    
+                    '''
+
+                    if random_filter:
+                        radius = max_point_distance + 0.5
+                    else:
+                        radius = 0.5 * step
+
+
+                    # initialize the kdtree index for the current row
+                    xydata = rowdf[["lon", "lat"]].values
+                    tree = kdtree.cKDTree(xydata)
+
+                    vardata_row = rowdf[["lon", "lat", "visible_fruit_per_m"]].values
+                    varmean_row = np.mean(vardata_row[:, 2])
+
+                    # initialize grid as numpy array, filled in with nodata value (-1)
+                    grid = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
+                    grid_error = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
+
+
+                    #set mask for the current row
+                    mask = row_indexed == int(row)
+                    index0_masked= index[0][mask]
+                    index1_masked = index[1][mask]
+
+                    # get the number of pixels to iterate
+                    npixels = index0_masked.shape[0]
+
+                    for i in range(npixels):
+
+                        lonlat = gdal.ApplyGeoTransform(geotr, int(index1_masked[i]), int(index0_masked[i]))
+
+                        ###get the  nearest points inside the interpolation radius
+                        nearindexes = tree.query_ball_point(lonlat, radius, n_jobs=-1)
+                        # f.write(" "+str(len(nearindexes)))
+                        if not nearindexes:  # actually this shouldnt happen
+                            continue
+                        nearvardata = vardata_row[nearindexes]
+
+                        # this is the ighest value in the nearby row data, this is used th threshod the output
+                        vardatamax = nearvardata[:, 2].max()
+
+                        # if there is only 1 neighbour we take its value else we do kriging
+                        if len(nearindexes) == 1:
+                            # if len(idx) == 1:
+                            grid[index0_masked[i], index1_masked[i]] = nearvardata[0, 2]  # i did this otherwise kriging with 1 point will raise error
+                            grid_error[index0_masked, index1_masked[i]] = 0  # todo how to deal with the error?
+                        else:
+                            distance, idx = tree.query((lonlat[0], lonlat[1]), len(nearindexes))
+                            krigdata = np.hstack((nearvardata, np.expand_dims(distance, axis=0).T))
+
+                            if variogram == "local":
+                                pass
+                            if variogram == "byrow":
+                                pass
+
+                            if interp == "simple":
+                                try:
+                                    simple = krig.simple(krigdata, varmean_row, semivariogram)
+                                except Exception as e:
+                                    print(e, end='')  # TODO did this because of the singular matrix error
+                                else:
+                                    if simple[0] > 1:
+                                        grid[index0_masked[i], index1_masked[i]] = 1.0
+                                        grid_error[index0_masked[i], index1_masked[i]] = simple[1]
+                                    if 0 <=  simple[0] <= 1:  # TODO temporary patch to avoid outside range result
+                                        grid[index0_masked[i], index1_masked[i]] = simple[0]
+                                        grid_error[index0_masked[i], index1_masked[i]] = simple[1]
+
+                            else:  # ordinary
+                                try:
+                                    ordinary = krig.ordinary(krigdata, semivariogram)
+                                except Exception as e:
+                                    print(e, end='')  # TODO did this because of the singular matrix error
+                                else:
+                                    if ordinary[0] > 1:
+                                        grid[index0_masked[i],index1_masked[i]] = 1.0
+                                        grid_error[index0_masked[i], index1_masked[i]] = ordinary[1]
+                                    # TODO this is a temporary patch to avoid outside range result!
+                                    if 0 <= ordinary[0] <= 1:
+                                        grid[index0_masked[i], index1_masked[i]] = ordinary[0]
+                                        grid_error[index0_masked[i], index1_masked[i]] = ordinary[1]
+
+                    # delete values less than zero and round the values
+
+                    np.round(grid, rounddecimals, out=grid)
+
+                    outRaster = None
+                    try:
+                        rastergrid = tempfolder + id + "_" + clr + "_step" + str(step) + "_" + interp + variogram + "_row"+str(row) + ".tiff"
+                        driver = gdal.GetDriverByName('GTiff')
+                        outRaster = driver.Create(rastergrid, deltx * area_multiplier, delty * area_multiplier, 1,
+                                                  gdal.GDT_Float32)
+                        outRaster.SetGeoTransform(geotr)
+                        outband = outRaster.GetRasterBand(1)
+                        outband.SetNoDataValue(nodata)
+                        # outband.WriteArray(np.flip(grid, 0))
+                        outband.WriteArray(grid)
+                        outRasterSRS = osr.SpatialReference()
+                        outRasterSRS.ImportFromEPSG(int(epsg))
+                        outRaster.SetProjection(outRasterSRS.ExportToWkt())
+                        outband.FlushCache()
+                    finally:
+                        if outRaster: outRaster = None
+
+                    outRaster = None
+                    try:
+                        rastergriderror = tempfolder + id + "_" + clr + "_step" + str(step) + "_" + interp + variogram + "_row" + str(row) + "_error.tiff"
+                        driver = gdal.GetDriverByName('GTiff')
+                        outRaster = driver.Create(rastergriderror, deltx * area_multiplier, delty * area_multiplier, 1,
+                                                  gdal.GDT_Float32)
+                        outRaster.SetGeoTransform(geotr)
+                        outband = outRaster.GetRasterBand(1)
+                        outband.SetNoDataValue(nodata)
+                        # outband.WriteArray(np.flip(grid_error, 0))
+                        outband.WriteArray(grid)
+                        outRasterSRS = osr.SpatialReference()
+                        outRasterSRS.ImportFromEPSG(int(epsg))
+                        outRaster.SetProjection(outRasterSRS.ExportToWkt())
+                        outband.FlushCache()
+                    finally:
+                        if outRaster: outRaster = None
 
                     # upload to numpy
-                    d = gdal.Open(tempfolder + id + "_" + clr + "_step" + str(step) + "_row"+str(row) + ".tiff")
+                    d = gdal.Open(tempfolder + id + "_" + clr + "_step" + str(step) + "_" + interp + variogram + "_row"+str(row) + ".tiff")
                     band = d.GetRasterBand(1)
                     # apply index
                     new_r_indexed = gdalIO.apply_index_to_single_band(band,
                                                                       index)  # this is the last index from the fruit count
+
                     d = None
 
                     # calculate average, std, total area (here a pixel is 0.25 m2,
@@ -637,7 +959,6 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                     new_r_indexed[mask].shape[0] * area,
                     np.count_nonzero(new_r_indexed[mask]) * area,
                     new_r_indexed[mask][new_r_indexed[mask] == 0].shape[0] * area]
-
 
 
     else: # no force interpolation by row
@@ -703,11 +1024,8 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                 # lags = range(0, int(radius), hh)
                 lags = np.arange(0, int(radius*2), hh)
 
-
-
                 gamma = vrc.semivar2(vardata, lags, hh)
                 # covariance = vrc.covar(data, lags, hh)
-
 
                 # chart empirical semivariance and covariance
                 output_file(folder + id + "_semivariogram_step"+str(step)+".html")
@@ -720,12 +1038,12 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                 save(f)
 
 
-                print("fit semivariogram for visible_fruit_per_m")
-                # choose the model with lowest rmse
+                print("fit semivariogram for visible_fruit_per_m step" + str(step))
+                # choose the model with lowest rmse (we use sphrical and exponential)
                 semivariograms = []
                 semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.spherical))
-                semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.linear))
-                semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.gaussian))
+                ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.linear))
+                ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.gaussian))
                 semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.exponential))
                 rsmes = [rmse(gamma[0], i(gamma[0])) for i in semivariograms]
                 semivariogram = semivariograms[rsmes.index(min(rsmes))]
@@ -746,7 +1064,6 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                 ####    semivariogram = fileIO.load_object(folder + id + "_semivariogram_step"+str(step)+".csv", usedill=True)
 
             #initialize the global kdtree index
-
             xydata = k[["lon","lat"]].values
             tree = kdtree.cKDTree(xydata)
 
@@ -755,8 +1072,8 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
 
             #initialize grid as numpy array, filled in with nodata value (-1)
 
-            grid = np.ones((delty * area_multiplier, deltx * area_multiplier))*(-1)
-            grid_error = np.ones((delty * area_multiplier, deltx * area_multiplier))*(-1)
+            grid = np.ones((delty * area_multiplier, deltx * area_multiplier))*(nodata)
+            grid_error = np.ones((delty * area_multiplier, deltx * area_multiplier))*(nodata)
 
             # initialize a geotransform # I am taking the geotransform form a file interpolated with gdal_grid
             # looks like gdal_grid set the origin in the bottom left with positive y pixelsize
@@ -783,13 +1100,13 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
             #get the number of pixels to iterate
             npixels = index[0].shape[0]
 
-            f=open(folder+id+"nearbypoints.txt","a")
+            #f=open(folder+id+"nearbypoints.txt","a")
             #iterate the pixels from the index
             for i in range(npixels):
                 # index[0] is for the rows, index[1] is for the columns
                 lonlat = gdal.ApplyGeoTransform(geotr,int(index[1][i]),int(index[0][i]))
 
-                ###get the  nearest cells inside the interpolation radius
+                ###get the  nearest points inside the interpolation radius
                 nearindexes = tree.query_ball_point(lonlat,radius, n_jobs= -1)
                 #f.write(" "+str(len(nearindexes)))
                 if not nearindexes: #actually this shouldnt happen
@@ -801,6 +1118,7 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                 #distance, idx = tree.query((lonlat[0], lonlat[1]), 10)
                 #nearvardata = vardata[idx]
 
+                #this is the ighest value in the nearby data, this is used th threshod the output
                 vardatamax= nearvardata[:,2].max()
 
                 #if there is only 1 neighbour we take its value else we do kriging
@@ -818,9 +1136,9 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                     krigdata = np.hstack((nearvardata, np.expand_dims(distance, axis=0).T))
 
 
+                    ############local variogram
                     if variogram == "local":
                         #"local calculate best variogram and kringing"
-                        pass
 
                         # i set the hh to the pixel size
                         hh = 1/area_multiplier
@@ -833,13 +1151,13 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                         # choose the model with lowest rmse
                         semivariograms = []
                         semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.spherical))
-                        semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.linear))
-                        semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.gaussian))
+                        ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.linear))
+                        ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.gaussian))
                         semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.exponential))
                         rsmes = [rmse(gamma[0], i(gamma[0])) for i in semivariograms]
                         semivariogram = semivariograms[rsmes.index(min(rsmes))]
 
-                        f.write("interpolating pixel "+str(i)+ "/" + str(npixels))
+                        #f.write("interpolating pixel "+str(i)+ "/" + str(npixels))
 
                     #else:
                     #else kriging with global variogram
@@ -849,7 +1167,7 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                         except Exception as e:
                             print(e, end='') #TODO did this because of the singular matrix error
                         else:
-                            if 0 <= simple[0] <=  vardatamax: #TODO temporary patch to avoid outside range result
+                            if simple[0] <= vardatamax * 2: #TODO temporary patch to avoid outside range result
                                 grid[index[0][i],index[1][i]] = simple[0]
                                 grid_error[index[0][i],index[1][i]] = simple[1]
 
@@ -860,16 +1178,20 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                             print(e,end='') #TODO did this because of the singular matrix error
                         else:
                             # TODO this is a temporary patch to avoid outside range result!
-
-                            if 0 <= ordinary[0] <= vardatamax*2:
+                            if ordinary[0] <= vardatamax*2:
                                 grid[index[0][i],index[1][i]] = ordinary[0]
                                 grid_error[index[0][i],index[1][i]] = ordinary[1]
-                            else:
-                                pass
-                                #print(ordinary[0])
+                            #else:
+                            #    pass
+                                #print(ordinary[0])'''
 
 
             # save to  folder + id + "_visible_step" + str(step) +  ".tiff"
+
+            #delete values less than zero and round the values
+            grid[grid < 0] = nodata
+            np.round(grid,rounddecimals,out=grid)
+
 
             outRaster = None
             try:
@@ -878,7 +1200,7 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                 outRaster = driver.Create(rastergrid, deltx * area_multiplier,delty * area_multiplier, 1, gdal.GDT_Float32)
                 outRaster.SetGeoTransform(geotr)
                 outband = outRaster.GetRasterBand(1)
-                outband.SetNoDataValue(-1.0)
+                outband.SetNoDataValue(nodata)
                 #outband.WriteArray( np.flip(grid,0))
                 outband.WriteArray(grid)
                 outRasterSRS = osr.SpatialReference()
@@ -893,7 +1215,7 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                 outRaster = driver.Create(rastergriderror, deltx * area_multiplier,delty * area_multiplier, 1, gdal.GDT_Float32)
                 outRaster.SetGeoTransform(geotr)
                 outband = outRaster.GetRasterBand(1)
-                outband.SetNoDataValue(-1.0)
+                outband.SetNoDataValue(nodata)
                 #outband.WriteArray( np.flip(grid_error,0))
                 outband.WriteArray(grid)
                 outRasterSRS = osr.SpatialReference()
@@ -965,7 +1287,6 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                     # set lags from 0 to the interpolation radius
                     # lags = range(0, int(radius), hh)
                     lags = np.arange(0, int(radius*2), hh)
-
                     gamma = vrc.semivar2(vardata, lags, hh)
                     # covariance = vrc.covar(data, lags, hh)
 
@@ -983,8 +1304,8 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                     # choose the model with lowest rmse
                     semivariograms = []
                     semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.spherical))
-                    semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.linear))
-                    semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.gaussian))
+                    ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.linear))
+                    ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.gaussian))
                     semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.exponential))
                     rsmes = [rmse(gamma[0], i(gamma[0])) for i in semivariograms]
                     semivariogram = semivariograms[rsmes.index(min(rsmes))]
@@ -1057,8 +1378,8 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                             # choose the model with lowest rmse
                             semivariograms = []
                             semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.spherical))
-                            semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.linear))
-                            semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.gaussian))
+                            ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.linear))
+                            ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.gaussian))
                             semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.exponential))
                             rsmes = [rmse(gamma[0], i(gamma[0])) for i in semivariograms]
                             semivariogram = semivariograms[rsmes.index(min(rsmes))]
@@ -1071,6 +1392,10 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                             except Exception as e:
                                 print(".", end='')  # TODO did this because of the singular matrix error
                             else:
+                                # TODO temporary patch to avoid outside range result
+                                if simple[0]>1:
+                                    grid[index[0][i], index[1][i]] = 1.0
+                                    grid_error[index[0][i], index[1][i]] = simple[1]
                                 if 0 <=  simple[0] <= 1:  # TODO temporary patch to avoid outside range result
                                     grid[index[0][i], index[1][i]] = simple[0]
                                     grid_error[index[0][i], index[1][i]] = simple[1]
@@ -1082,14 +1407,19 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                             else:
                                 # TODO temporary patch to avoid outside range result
                                 if ordinary[0]>1:
-                                    grid[index[0][i], index[1][i]] = 1
+                                    grid[index[0][i], index[1][i]] = 1.0
                                     grid_error[index[0][i], index[1][i]] = ordinary[1]
                                 if 0 <= ordinary[0] <= 1:
                                     grid[index[0][i], index[1][i]] = ordinary[0]
                                     grid_error[index[0][i], index[1][i]] = ordinary[1]
 
 
+
                 # save to folder + id + "_" + clr + "_step" + str(step) + "_" + interp + variogram + ".tiff")
+
+                # round the values
+                np.round(grid, rounddecimals, out=grid)
+
 
                 outRaster = None
                 try:
@@ -1099,7 +1429,7 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                                               gdal.GDT_Float32)
                     outRaster.SetGeoTransform(geotr)
                     outband = outRaster.GetRasterBand(1)
-                    outband.SetNoDataValue(-1.0)
+                    outband.SetNoDataValue(nodata)
                     #outband.WriteArray(np.flip(grid, 0))
                     outband.WriteArray(grid)
                     outRasterSRS = osr.SpatialReference()
@@ -1117,7 +1447,7 @@ def berrycolor_workflow_1(steps=[30], interp="simple", random_filter=False, firs
                                               gdal.GDT_Float32)
                     outRaster.SetGeoTransform(geotr)
                     outband = outRaster.GetRasterBand(1)
-                    outband.SetNoDataValue(-1.0)
+                    outband.SetNoDataValue(nodata)
                     #outband.WriteArray(np.flip(grid_error, 0))
                     outband.WriteArray(grid)
                     outRasterSRS = osr.SpatialReference()
@@ -1229,15 +1559,21 @@ if __name__ == "__main__":
 
     def kriger():
 
-        id, stats = berrycolor_workflow_1(steps=[50], interp="ordinary", random_filter=False, first_last=False, force_interpolation_by_row=False,
-                              variogram = "local",rowdirection="x", epsg="32611")
+        steps = [5,6,7,8,9,10,20,30,50,100]
+        grades = ['a','b','c','d']
+
+        interp = "simple"
+        variogram="global"
+
+
+
+        id, stats = berrycolor_workflow_kriging(steps=steps, interp=interp, random_filter=False, first_last=False, force_interpolation_by_row=False,
+                              variogram = variogram,rowdirection="x", epsg="32611")
 
         folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
         fileIO.save_object(folder + id + "_statistics_ordinary", stats)
 
-
-        from pysdss.analytics.colorgrade.research.colorgrade_comparisons import test_interpret_result
-        from pysdss.analytics.colorgrade.research.colorgrade_comparisons import test_compare_raster_totruth
+        import pysdss.analytics.colorgrade.research.colorgrade_comparisons as comp
 
         #id = "adca0a053062b45da8a20e0a0d4b4fe54"
         folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
@@ -1246,15 +1582,25 @@ if __name__ == "__main__":
                     "visible_avg", "visible_std"]
 
         stats = fileIO.load_object(folder + id + "_statistics_ordinary")
-        test_interpret_result(stats,id,folder,colmodel)
+        comp.test_interpret_result(stats, id, folder,colmodel)
+
+        print("comparing to points")
+        point = folder + id + "_keep.csv"
+
+        comp.test_compare_raster_totruth(point, id, folder, step=steps, clean=[[-1], [0]],counts=["visible"], suffix="_"+interp+variogram)
+        print("calculate rmse")
+        comp.calculate_rmse_row(folder, id, nsteps=steps)
+        comp.estimate_berries_byrow(folder, id, steps=steps)
+        comp.calculate_rmse(folder, id, steps=steps)
+        print("make charts")
+        comp.chart_rmse(folder, id)
+        comp.chart_estimated_berries(folder, id, steps=steps, useperc=True)
+        comp.chart_estimates_comparison(folder, id, steps=steps)
+        comp.chart_visible_berries(folder, id, steps=steps)
+        comp.chart_colorgrades(folder, id, grades, steps, useperc=True)
 
 
-        #point = folder + id + "_keep.csv"
-        #test_compare_raster_totruth(point,"a0857fd6fbb0e4f6fbacb26b1a984779a", folder,step=steps )
-        #test_compare_raster_totruth(point, id, folder,step=steps, clean=[[-1],[0]])
-
-
-    kriger()
+    #kriger()
 
 
     def comparematrices():
@@ -1267,8 +1613,6 @@ if __name__ == "__main__":
         g = d.GetGeoTransform()
         print(d)
 
-
-
         e = gdal.Open(
             "/vagrant/code/pysdss/data/output/text/afc3e0829d87e4aa19212923b3f44e519/afc3e0829d87e4aa19212923b3f44e519_d_step50_ordinaryglobal.tiff")
         band1 = e.GetRasterBand(1)
@@ -1280,3 +1624,18 @@ if __name__ == "__main__":
         pass
 
     #comparematrices()
+
+
+    def kriger_byrow():
+
+        steps = [50]
+        grades = ['a','b','c','d']
+
+        interp = "ordinary"
+        variogram="global"
+
+        id, stats = berrycolor_workflow_kriging(steps=steps, interp=interp, random_filter=False, first_last=False, force_interpolation_by_row=True,
+                              variogram = variogram,rowdirection="x", epsg="32611")
+
+
+    kriger_byrow()

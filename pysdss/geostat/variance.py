@@ -58,6 +58,7 @@ def semivar(data, lags, hh):
 
 def semivar2(data, lags, hh):
     """ Calculate empirical semivariance
+    this version is faster than semivar()
     :param data: a 2-D NumPy array, where each element has x,y,value
     :param lags: distance bins in 1-D array
     :param hh: half of the bin size in distance
@@ -84,26 +85,6 @@ def semivar2(data, lags, hh):
         out[b-1] = np.sum(np.power(data[index[0]][:, 2] - data[index[1]][:, 2], 2)) / (len(index[0]) * 2)
 
     return np.array([[lags[i], out[i]] for i in range(len(lags)) if out[i] > 0]).T
-
-
-
-    '''
-    for h in lags:
-        np.unique(idx_bin)        gammas = []
-        for i in range(n):
-            for j in range(n):
-                #if dist[i][j] >= h-hh and dist[i][j]<=h+hh:
-                if h-hh <= dist[i][j] <= h+hh: # we check the distances to fill in distance bins
-                    gammas.append((data[i][2]-data[j][2])**2)
-        if len(gammas) == 0:
-            gamma = 0
-        else:
-            gamma = np.sum(gammas) / (len(gammas)*2.0) #and we calculate the semivariance for this bin
-        semivariance.append(gamma)
-    semivariance = [[lags[i], semivariance[i]] for i in range(len(lags)) if semivariance[i] > 0]
-
-    return np.array(semivariance).T
-    '''
 
 
 def covar(data, lags, hh):
