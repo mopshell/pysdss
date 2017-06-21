@@ -17,8 +17,8 @@ import random
 import shutil
 #import json
 #import shutil
-#import warnings
-
+import warnings
+import sys
 import os
 import os.path
 from osgeo import gdal
@@ -30,10 +30,23 @@ import numpy as np
 #from scipy.interpolate import Rbf
 #from scipy.misc import imsave
 
+import scipy.spatial.ckdtree as kdtree
+#from scipy.spatial.distance import pdist
+from scipy.spatial import ConvexHull
+
 import matplotlib
 matplotlib.use('Agg')
 #import matplotlib.pyplot as plt
 #from matplotlib import cm
+
+from sklearn import linear_model
+
+
+from bokeh.plotting import figure
+from bokeh.io import output_file, save
+#from bokeh.models import Label
+from bokeh.models import NumeralTickFormatter, Label
+from bokeh.palettes import d3
 
 
 #from rasterstats import point_query
@@ -47,6 +60,12 @@ from pysdss.filtering import filter
 from pysdss.gridding import gridding as grd
 from pysdss.utility import utils as utils2
 
+import  pysdss.geostat.variance as vrc
+import pysdss.geostat.fit as fit
+from  pysdss.utils import rmse
+from pysdss.geostat import kriging as krig
+
+
 #######################################################
 ##############old berry workflow 1#####################
 
@@ -54,6 +73,51 @@ connstring = {"dbname": "grapes", "user": "claudio", "password": "claudio", "por
 datasetid = 26
 boundid = 1
 
+
+
+
+def outinfo(outpath,
+                    name,
+                    filter_type,
+                    interpolation,
+                    first_last,
+                    steps,
+                    colorgrades,
+                    counts,
+                    variogram=""
+            ):
+
+    """
+
+    Output a json file with the interpolation info (which will be used later to label charts)
+
+    {
+    "name": "moving average" | "inverse distance" | "simple kriging" | "ordinary kriging"
+    "filter_type": "ordered" | "random"
+    "interpolation": "free" | "onlyrows"     (all neighbours or just vineyard neighbours)
+    "first_last": "true" | "false"    (take first/last point of a row)
+    "steps":[2,3,4,....]
+    "colorgrades":['a','b','c','d']
+    "counts":['visible','raw']
+    "variogram": "" | "global" | "local" | "byrow"     ("byrow" is a made with the row points only)
+    }
+
+    :param outpath:
+    :param kwargs: the keys for the dictionary
+    :return:
+    """
+
+    info = {
+        "name":name,
+        "filter_type":filter_type,
+        "interpolation":interpolation,
+        "first_last":first_last,
+        "steps":steps,
+        "colorgrades":colorgrades,
+        "counts":counts,
+        "variogram":variogram
+    }
+    utils.json_io(outpath, info)
 
 ########## download generic 2 joined data table
 def dowload_all_data_test(id, path):
@@ -974,6 +1038,18 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
         os.mkdir(folder + id)
     folder = folder + id + "/"
 
+    outinfo(folder+"info.json",
+            "moving average" if interp=="average" else "inverse distance",
+            "random" if random_filter else "ordered",
+            "onlyrows" if force_interpolation_by_row else "free",
+            first_last,
+            steps,
+            colorgrades=['a', 'b', 'c', 'd'],
+            counts=["visible","raw"]
+            )
+
+    return
+
     # create a directory to store settings
     # if not os.path.exists(experimentfolder + str(id)):
     #   os.mkdir(experimentfolder + str(id))
@@ -1649,6 +1725,1171 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
     # {2: {"a": {1: {'truth': {}, 'interpolated': {}}}}}
 
 
+#################################################### kriging #################################################
+
+
+
+def get_variogram(vardata, hh, maxlagdistance, outfile):
+    """
+    Calculate semivariance and fit the semivariogram
+    :param vardata: x,y,value
+    :param hh: bin size
+    :param maxlagdistance: maxdistance for semivariance
+    :param outfile: full path name to output file (without extension)
+    :return: the semivariogram object
+    """
+
+    print("calculte empirical semivariance")
+
+    # i set the hh to 5 neters and the max distance to the smallest field edge
+    # hh = 2
+    # lags = range(0,min(delty ,deltx), hh)
+    # lags = range(0, int((delty+deltx)/2), hh)
+
+    # set lags from 0 to the interpolation radius
+    # lags = range(0, int(radius), hh)
+
+    lags = np.arange(0, int(maxlagdistance * 2), hh)
+    gamma = vrc.semivar2(vardata, lags, hh)
+    # covariance = vrc.covar(data, lags, hh)
+
+    # chart empirical semivariance and covariance
+    output_file(outfile + ".html")
+    f = figure()
+    f.line(gamma[0, :], gamma[1, :], line_color="green", line_width=2, legend="Semivariance")
+    f.square(gamma[0, :], gamma[1, :], fill_color=None, line_color="green", legend="Semivariance")
+    # f.line(cov[0, :], cov[1, :], line_color="red", line_width=2, legend="Covariance")
+    # f.square(cov[0, :], cov[1, :], fill_color=None, line_color="red", legend="Covariance")
+    f.legend.location = "top_left"
+    save(f)
+
+    print("fit semivariogram")
+    # choose the model with lowest rmse (we use sphrical and exponential)
+    semivariograms = []
+    semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.spherical))
+    ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.linear))
+    ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.gaussian))
+    semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.exponential))
+    rsmes = [rmse(gamma[0], i(gamma[0])) for i in semivariograms]
+    semivariogram = semivariograms[rsmes.index(min(rsmes))]
+
+    # chart the fitted models
+    output_file(outfile + "_fitted.html")
+    f = figure()
+    f.circle(gamma[0], gamma[1], fill_color=None, line_color="blue")
+    f.line(gamma[0], semivariogram(gamma[0]), line_color="red", line_width=2)
+    f.legend.location = "top_left"
+    save(f)
+
+    fileIO.save_object(outfile + ".var", semivariogram, usedill=True)
+
+    return semivariogram
+
+
+def savegrids(grid, gridpath, grid_error, grid_errorpath, xsize, ysize, geotr, nodata, epsg):
+    """
+    Output interpolated grids
+    :param grid:
+    :param gridpath:
+    :param grid_error:
+    :param grid_errorpath:
+    :param xsize:
+    :param ysize:
+    :param geotr:
+    :param nodata:
+    :param epsg:
+    :return:
+    """
+
+    outRaster = None
+    try:
+        # rastergrid = folder + id + "_visible_step" + str(step) + "_" + interp + variogram + ".tiff"
+        rastergrid = gridpath + ".tiff"
+
+        driver = gdal.GetDriverByName('GTiff')
+        outRaster = driver.Create(rastergrid, xsize, ysize, 1, gdal.GDT_Float32)
+        outRaster.SetGeoTransform(geotr)
+        outband = outRaster.GetRasterBand(1)
+        outband.SetNoDataValue(nodata)
+        # outband.WriteArray( np.flip(grid,0))
+        outband.WriteArray(grid)
+        outRasterSRS = osr.SpatialReference()
+        outRasterSRS.ImportFromEPSG(int(epsg))
+        outRaster.SetProjection(outRasterSRS.ExportToWkt())
+        outband.FlushCache()
+    finally:
+        if outRaster: outRaster = None
+    try:
+        # rastergriderror = folder + id + "_visible_step" + str(step) + "_" + interp + variogram + "_error.tiff"
+        rastergriderror = grid_errorpath + ".tiff"
+
+        driver = gdal.GetDriverByName('GTiff')
+        outRaster = driver.Create(rastergriderror, xsize,
+                                  ysize, 1, gdal.GDT_Float32)
+        outRaster.SetGeoTransform(geotr)
+        outband = outRaster.GetRasterBand(1)
+        outband.SetNoDataValue(nodata)
+        # outband.WriteArray( np.flip(grid_error,0))
+        outband.WriteArray(grid_error)
+        outRasterSRS = osr.SpatialReference()
+        outRasterSRS.ImportFromEPSG(int(epsg))
+        outRaster.SetProjection(outRasterSRS.ExportToWkt())
+        outband.FlushCache()
+    finally:
+        if outRaster: outRaster = None
+
+
+def fillin_grids_counts(krigdata, varmean, semivariogram, grid, grid_error, index0,
+                        index1, interp, vardatamax):
+    """
+    :param krigdata:
+    :param varmean_row:
+    :param semivariogram:
+    :param grid:
+    :param grid_error:
+    :param index0:
+    :param index1:
+    :param interp:
+    :param vardatamax:
+    :return:
+    """
+    if interp == "simple":
+        try:
+            # todo should i use varmean as I create a semivariogram for all field data?
+            simple = krig.simple(krigdata, varmean, semivariogram)
+        except Exception as e:
+            print(e, end='')  # TODO did this because of the singular matrix error
+        else:
+            if simple[0] <= vardatamax * 2:  # TODO temporary patch to avoid outside range result
+                grid[index0, index1] = simple[0]
+                grid_error[index0, index1] = simple[1]
+
+    else:  # ordinary
+        try:
+            ordinary = krig.ordinary(krigdata, semivariogram)
+        except Exception as e:
+            print(e, end='')  # TODO did this because of the singular matrix error
+        else:
+            # TODO this is a temporary patch to avoid outside range result!
+            if ordinary[0] <= vardatamax * 2:
+                grid[index0, index1] = ordinary[0]
+                grid_error[index0, index1] = ordinary[1]
+
+
+def fillin_grids_colors(krigdata, varmean, semivariogram, grid, grid_error, index0,
+                        index1, interp):
+    """
+
+    :param krigdata:
+    :param varmean_row:
+    :param semivariogram:
+    :param grid:
+    :param grid_error:
+    :param index0:
+    :param index1:
+    :param interp:
+    :return:
+    """
+    if interp == "simple":
+        try:
+            # todo should i use varmean as I create a semivariogram for all field data?
+            simple = krig.simple(krigdata, varmean, semivariogram)
+        except Exception as e:
+            print(e, end='')  # TODO did this because of the singular matrix error
+        else:
+            # TODO temporary patch to avoid outside range result
+            if simple[0] > 1:
+                grid[index0, index1] = 1.0
+                grid_error[index0, index1] = simple[1]
+            if 0 <= simple[0] <= 1:
+                grid[index0, index1] = simple[0]
+                grid_error[index0, index1] = simple[1]
+    else:  # ordinary
+        try:
+            ordinary = krig.ordinary(krigdata, semivariogram)
+        except Exception as e:
+            print(e, end='')  # TODO did this because of the singular matrix error
+        else:
+            if ordinary[0] > 1:
+                grid[index0, index1] = 1.0
+                grid_error[index0, index1] = ordinary[1]
+            # TODO this is a temporary patch to avoid outside range result!
+            if 0 <= ordinary[0] <= 1:
+                grid[index0, index1] = ordinary[0]
+                grid_error[index0, index1] = ordinary[1]
+
+
+def dokriging(vardata, grid, grid_error, semivariogram, index, geotr, datasorce, interp, tree, radius):
+    """
+
+    :param vardata:
+    :param grid:
+    :param grid_error:
+    :param semivariogram:
+    :param index:
+    :param geotr:
+    :param datasorce:
+    :param interp:
+    :param tree: rtree
+    :param radius: interpolation radius
+    :return:
+    """
+    # get the number of pixels to iterate
+    npixels = index[0].shape[0]
+
+    for i in range(npixels):
+
+        lonlat = gdal.ApplyGeoTransform(geotr, int(index[1][i]), int(index[0][i]))
+
+        ###get the  nearest points inside the interpolation radius
+        nearindexes = tree.query_ball_point(lonlat, radius, n_jobs=-1)
+        # f.write(" "+str(len(nearindexes)))
+        if not nearindexes:  # actually this shouldnt happen
+            continue
+        nearvardata = vardata[nearindexes]
+        varmean = np.mean(nearvardata[:, 2])
+        # this is the highest value in the nearby row data, this is used th threshod the output
+        vardatamax = nearvardata[:, 2].max()
+
+        # if there is only 1 neighbour we take its value else we do kriging
+        if len(nearindexes) == 1:
+            # if len(idx) == 1:
+            grid[index[0][i], index[1][i]] = nearvardata[
+                0, 2]  # i did this otherwise kriging with 1 point will raise error
+            grid_error[index[0][i], index[1][i]] = 0  # todo how to deal with the error?
+        else:
+            distance, idx = tree.query((lonlat[0], lonlat[1]), len(nearindexes))
+            krigdata = np.hstack((nearvardata, np.expand_dims(distance, axis=0).T))
+
+            # for now there is only global variogrm
+            ############local variogram
+            '''
+            if variogram == "local":
+                #"local calculate best variogram and kringing"
+
+                # i set the hh to the pixel size
+                hh = 1/area_multiplier
+                # set lags from 0 to the interpolation radius
+                #lags = range(0, int(radius), hh)
+                lags = np.arange(0, int(radius), hh)
+                gamma = vrc.semivar2(vardata, lags, hh)
+                # covariance = vrc.covar(data, lags, hh)
+
+                # choose the model with lowest rmse
+                semivariograms = []
+                semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.spherical))
+                ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.linear))
+                ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.gaussian))
+                semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.exponential))
+                rsmes = [rmse(gamma[0], i(gamma[0])) for i in semivariograms]
+                semivariogram = semivariograms[rsmes.index(min(rsmes))]
+            '''
+            # if variogram == "byrow":
+            #    pass
+
+        if datasorce == 'counts':
+
+            fillin_grids_counts(krigdata, varmean, semivariogram, grid, grid_error, index[0][i],
+                                index[1][i], interp, vardatamax)
+        else:
+            fillin_grids_colors(krigdata, varmean, semivariogram, grid, grid_error, index[0][i],
+                                index[1][i], interp)
+
+    return grid, grid_error
+
+
+
+def dokriging_byrow(dataset, row, step, field, grid, grid_error, semivariogram, random_filter, row_indexed, index, geotr, datasorce, interp, rowdirection):
+    """
+    Like the above dofriging, but this is for kriging by row
+    :param dataset: pandas dataframe
+    :param row:
+    :param step:
+    :param field:
+    :param grid:
+    :param grid_error:
+    :param semivariogram:
+    :param random_filter:
+    :param row_indexed:
+    :param index:
+    :param geotr:
+    :param datasorce: 'counts'  or 'colors'
+    :param interp:
+    :param rowdirection:
+    :return:
+    """
+
+    # select one vineyard row
+    rowdf = dataset[dataset["row"] == int(row)]
+
+    # if random_filter we will set the radius to the max distance between points in a row
+    if random_filter:
+        max_point_distance = utils.max_point_distance(rowdf, "lon", "lat", "row",
+                                                                    direction=rowdirection)
+        radius = max_point_distance + 0.5
+    else:
+        radius = 0.5 * step
+
+    # initialize the kdtree index for the current row
+    xydata = rowdf[["lon", "lat"]].values
+    tree = kdtree.cKDTree(xydata)
+
+    vardata_row = rowdf[["lon", "lat", field]].values
+    varmean_row = np.mean(vardata_row[:, 2])
+
+    # set mask for the current row
+    mask = row_indexed == int(row)
+    index0_masked = index[0][mask]
+    index1_masked = index[1][mask]
+
+    # get the number of pixels to iterate
+    npixels = index0_masked.shape[0]
+
+    for i in range(npixels):
+
+        lonlat = gdal.ApplyGeoTransform(geotr, int(index1_masked[i]), int(index0_masked[i]))
+
+        ###get the  nearest points inside the interpolation radius
+        nearindexes = tree.query_ball_point(lonlat, radius, n_jobs=-1)
+        # f.write(" "+str(len(nearindexes)))
+        if not nearindexes:  # actually this shouldnt happen
+            continue
+        nearvardata = vardata_row[nearindexes]
+        varmean_row = np.mean(nearvardata[:, 2]) #########todo is this correct? ineed the mean of this subdata for simple kriging???
+        # this is the ighest value in the nearby row data, this is used th threshod the output
+        vardatamax = nearvardata[:, 2].max()
+
+        # if there is only 1 neighbour we take its value else we do kriging
+        if len(nearindexes) == 1:
+            # if len(idx) == 1:
+            grid[index0_masked[i], index1_masked[i]] = nearvardata[0, 2]  # i did this otherwise kriging with 1 point will raise error
+            grid_error[index0_masked[i], index1_masked[i]] = 0  # todo how to deal with the error?
+        else:
+            distance, idx = tree.query((lonlat[0], lonlat[1]), len(nearindexes))
+            krigdata = np.hstack((nearvardata, np.expand_dims(distance, axis=0).T))
+
+            # for now there is only global variogrm
+            #if variogram == "local":
+            #    pass
+            #if variogram == "byrow":
+            #    pass
+
+            if datasorce == 'counts':
+
+                fillin_grids_counts(krigdata, varmean_row, semivariogram, grid, grid_error, index0_masked[i],
+                                    index1_masked[i], interp,vardatamax)
+            else:
+                fillin_grids_colors(krigdata, varmean_row, semivariogram, grid, grid_error, index0_masked[i],
+                                    index1_masked[i], interp)
+
+    return grid, grid_error
+
+
+
+
+############################################   30 05 2017 ######################################
+
+##add parameter that specify we want random filtered data for row  ( take first/last and then random in between the 2)
+##add parameter to force inteerpolation for points in the same row only (for higher filters the interpolation radius will
+##overlap with points belonging to adjacent rows
+
+#so there are 8 possibilities for each interpolation method
+# ordered filter, first/last, free interpolation
+# ordered filter, no first/last, free interpolation
+# ordered filter, first/last, interpolation by row only
+# ordered filter, no first/last, interpolation by row only
+# random filter, first/last, free interpolation
+# random filter, no first/last, free interpolation
+# random filter, first/last, interpolation by row only
+# random filter, no first/last, interpolation by row only
+
+
+#for random filter the interpolation radius is calculated with the max distance between points on the same row
+
+
+#the interpolation radius is used for the semivariogram lags max distance
+
+
+def berrycolor_workflow_kriging(steps=[30], colorgrades = ['a','b','c','d'], counts = ['raw','visible'], interp="simple",
+                                random_filter=False, first_last=False, force_interpolation_by_row=False, nodata=-1.0,
+                                variogram = "global",rowdirection="x", epsg="32611", rounddecimals=4,
+                                id = "adca0a053062b45da8a20e0a0d4b4fe54", skip=True):
+
+    """
+    Do kriging interpolation on the colorgrade data and output rasters and statistics file
+
+    :param steps: the filtering steps to use
+    :param colorgrades:  colorgrades to consider    possibles ['a','b','c','d']
+    :param counts: count fields to consider   possibles ['raw','visible']
+    :param interp: "simple" or "ordinary"
+    :param random_filter: true to take random points (e,g step2 takes 50% random points for each row, false use ordered filter
+    (e.g. step2 takes 1 point every 2 points)
+    :param first_last: true to always have the first and last point of a vineyard row
+    :param force_interpolation_by_row: True if i want to be sure the points belong to the current row only and no
+                                        points from other rows are used during interpolation
+    :param nodata:
+    :param variogram: "global","local","byrow"  (only global is now supported, byrow is like local but only for points from
+                                                the current row)
+
+                                                        variogram
+                                            global      byrow       local
+    force_interpolation_by_row    true      X           X           X
+                                  false     X                       X
+    :param rowdirection:    'x' ,'y'
+    :param epsg: coordinate system code
+    :param rounddecimals: number of decimals in the resulting iterpolation grids
+     this is used to round the decimals in the result grids, this should limit overflows when calculating the statistics
+    :param id: used for debugging purposes
+    :param skip: used for debugging purposes
+    :return:
+    """
+
+
+    if variogram not in ["global", "byrow", "local"]:
+        raise ValueError("Variogram should be 'global' or 'byrow' or 'local'")
+
+    if variogram == "byrow":
+        raise NotImplementedError("variogram by row is not implemented")
+    if variogram == "local":
+        raise NotImplementedError("local variogram cannot be used at present")
+
+    if variogram == 'byrow' and not force_interpolation_by_row:
+        raise ValueError("Variogram=='byrow' cannot be used with force_interpolation_by_row==False")
+
+
+    if interp not in ["simple", "ordinary"]:
+        raise ValueError("Interpolation should be 'simple' or 'ordinary'")
+
+
+
+    #jsonpath = os.path.join(os.path.dirname(__file__), '../..', "pysdss/experiments/interpolation/")
+    jsonpath = os.path.join(os.path.dirname(__file__), '../../../..', "pysdss/experiments/interpolation/")
+    jsonpath = os.path.normpath(jsonpath)
+
+
+
+    folder = "/vagrant/code/pysdss/data/output/text/"
+    experimentfolder = "/vagrant/code/pysdss/experiments/interpolation/"
+
+    # create a folder to store the output
+    id = utils.create_uniqueid()
+    if not os.path.exists(folder + id):
+        os.mkdir(folder + id)
+    folder = folder + id + "/"
+
+
+    outinfo(folder+"info.json",
+            "simple kriging" if interp=="simple" else "ordinary kriging",
+            "random" if random_filter else "ordered",
+            "onlyrows" if force_interpolation_by_row else "free",
+            first_last,
+            steps,
+            colorgrades,
+            counts,
+            variogram
+            )
+    return
+
+    # create a directory to store settings
+    # if not os.path.exists(experimentfolder + str(id)):
+    #   os.mkdir(experimentfolder + str(id))
+    # dowload_data_test(id, folder)
+
+    # dowload the data #TODO: create function to read from the database
+    df = pd.read_csv("/vagrant/code/pysdss/data/input/2016_06_17.csv",
+                     usecols=["%Dataset_id", " Row", " Raw_fruit_count",
+                              " Visible_fruit_per_m", " Latitude", " Longitude", "Harvestable_A", "Harvestable_B",
+                              "Harvestable_C", "Harvestable_D"])
+    df.columns = ["id", "row", "raw_fruit_count", "visible_fruit_per_m", "lat", "lon", "a", "b", "c", "d"]
+
+    # here should be necessary some mapping to get the column names
+
+
+    # filter data (and save to disk .
+    # 1/03/17  we don't filter
+    # keep, discard = filter.filter_byvalue(df, 0, ">", colname="d")
+    keep = df
+
+    # save filtered data to disk after reprojection
+    # reproject latitude, longitude #WGS 84 / UTM zone 11N
+    west, north = utils2.reproject_coordinates(keep, "epsg:"+epsg, "lon", "lat", False)
+    filter.set_field_value(keep, west, "lon")
+    filter.set_field_value(keep, north, "lat")
+    filter.set_field_value(keep, 0, "keepa")
+    filter.set_field_value(keep, 0, "keepb")
+    filter.set_field_value(keep, 0, "keepc")
+    filter.set_field_value(keep, 0, "keepd")
+
+
+    ##############search and remove duplicates
+    #keep = utils.remove_duplicates(keep, ["lat", "lon"], operation="mean")
+    ########################################
+
+    keep.to_csv(folder + id + "_keep.csv", index=False)
+
+    '''west,north =utils.reproject_coordinates(discard, "epsg:32611", "lon", "lat", False)
+    filter.set_field_value(discard, west,"lon")
+    filter.set_field_value(discard, north,"lat")
+    filter.set_field_value(discard, 0, "keepd")
+    discard.to_csv(folder + id +"_discard.csv",index=False)'''
+
+
+    # create the virtualdataset header for the datafile
+
+    with open(jsonpath + "/vrtmodel.txt") as f:
+        xml = f.read()
+
+    # output the 4 virtual files for the 4 columns
+    # for clr in ["a"]:
+    for clr in ["a", "b", "c", "d"]:
+        data = {"layername": id + "_keep", "fullname": folder + id + "_keep.csv", "easting": "lon", "northing": "lat",
+                "elevation": clr}
+        utils2.make_vrt(xml, data, folder + id + "_keep" + clr + ".vrt")
+
+    # output the virtual files for raw fruit count and visible fruit count
+    data = {"layername": id + "_keep", "fullname": folder + id + "_keep.csv", "easting": "lon", "northing": "lat",
+            "elevation": "raw_fruit_count"}
+    utils2.make_vrt(xml, data, folder + id + "_keep_rawfruit.vrt")
+
+    data = {"layername": id + "_keep", "fullname": folder + id + "_keep.csv", "easting": "lon", "northing": "lat",
+            "elevation": "visible_fruit_per_m"}
+    utils2.make_vrt(xml, data, folder + id + "_keep_visiblefruit.vrt")
+
+    # 5 define an interpolation grid (the user can choose an existing grid or draw on screen)
+    # here i am doing manually for testing, i just take the bounding box
+
+    minx = math.floor(keep['lon'].min())
+    maxx = math.ceil(keep['lon'].max())
+    miny = math.floor(keep['lat'].min())
+    maxy = math.ceil(keep['lat'].max())
+    delty = maxy - miny  # height
+    deltx = maxx - minx  # width
+
+    area_multiplier = 2  # 2 to double the resulution and halve the pixel size to 0.5 meters
+
+    # log a running process to the database
+    # save grid metadata and interpolation metadata to the database historic tables
+    # xecute gridding with gdal_array (set nodata value to zero or other value)
+
+    path = jsonpath + "/average.json"
+    params = utils.json_io(path, direction="in")
+
+    params["-txe"] = str(minx) + " " + str(maxx)
+    params["-tye"] = str(miny) + " " + str(maxy)
+    params["-a"]["nodata"] = str(nodata)
+    # pixel is 0.5 meters
+    params["-outsize"] = str(deltx * area_multiplier) + " " + str(delty * area_multiplier)
+
+    # for clr in ["a"]:
+    for clr in colorgrades:
+
+        params["src_datasource"] = folder + id + "_keep" + clr + ".vrt"
+        params["dst_filename"] = folder + id + "_" + clr + ".tiff"
+
+        # build gdal_grid request
+        text = grd.build_gdal_grid_string(params, outtext=False)
+        print(text)
+        text = ["gdal_grid"] + text
+        print(text)
+
+        # call gdal_grid
+        print("Getting the 'truth' raster for color " + clr)
+        out, err = utils.run_tool(text)
+        print("output" + out)
+        if err:
+            print("error:" + err)
+            raise Exception("gdal grid failed")
+
+    ##rasterize raw fruit and visible fruit
+
+    if 'raw' in counts:
+        params["src_datasource"] = folder + id + "_keep_rawfruit.vrt"
+        params["dst_filename"] = folder + id + "_rawfruit.tiff"
+
+        # build gdal_grid request
+        text = grd.build_gdal_grid_string(params, outtext=False)
+        print(text)
+        text = ["gdal_grid"] + text
+        print(text)
+
+        # call gdal_grid
+        print("Getting the 'truth' raster for raw fruit count")
+        out, err = utils.run_tool(text)
+        print("output" + out)
+        if err:
+            print("error:" + err)
+            raise Exception("gdal grid failed")
+
+    if 'visible' in counts:
+        params["src_datasource"] = folder + id + "_keep_visiblefruit.vrt"
+        params["dst_filename"] = folder + id + "_visiblefruit.tiff"
+
+        # build gdal_grid request
+        text = grd.build_gdal_grid_string(params, outtext=False)
+        print(text)
+        text = ["gdal_grid"] + text
+        print(text)
+
+        # call gdal_grid
+        print("Getting the 'truth' raster for visible fruit per m")
+        out, err = utils.run_tool(text)
+        print("output" + out)
+        if err:
+            print("error:" + err)
+            raise Exception("gdal grid failed")
+
+    # 9 add result url to the database table
+    # 10 log completed process (maybe should add the location of the result
+
+
+    # 11 define the indexed array for the images, I used the same interpolation method and parameters therefore the index
+    #  is the same
+
+    # for clr in ["a"]:
+    for clr in colorgrades:
+        d = gdal.Open(folder + id + "_" + clr + ".tiff")
+        index, r_indexed, properties = gdalIO.raster_dataset_to_indexed_numpy(d, id, maxbands=1, bandLocation="byrow",
+                                                                              nodata=-1)
+        print("saving indexed array to disk")
+        fileIO.save_object(folder + id + "_indexedarray_" + clr, (index, r_indexed, properties))
+        d = None
+
+
+    if 'raw' in counts:
+        # define the indexed array for the raw and visible fruit
+        d = gdal.Open(folder + id + "_rawfruit.tiff")
+        index, r_indexed, properties = gdalIO.raster_dataset_to_indexed_numpy(d, id, maxbands=1, bandLocation="byrow",
+                                                                              nodata=-1)
+        print("saving indexed array to disk")
+        fileIO.save_object(folder + id + "_indexedarray_rawfruit", (index, r_indexed, properties))
+        d = None
+
+
+    if 'visible' in counts:
+        d = gdal.Open(folder + id + "_visiblefruit.tiff")
+        index, r_indexed, properties = gdalIO.raster_dataset_to_indexed_numpy(d, id, maxbands=1, bandLocation="byrow",
+                                                                              nodata=-1)
+        print("saving indexed array to disk")
+        fileIO.save_object(folder + id + "_indexedarray_visiblefruit", (index, r_indexed, properties))
+        d = None
+
+    ######## rasterize rows with nearest neighbour
+
+    data = {"layername": id + "_keep", "fullname": folder + id + "_keep.csv", "easting": "lon", "northing": "lat",
+            "elevation": "row"}
+    utils2.make_vrt(xml, data, folder + id + "_keep_row.vrt")
+    '''newxml = xml.format(**data)
+    f = open(folder + id+"_keep_row.vrt", "w")
+    f.write(newxml)
+    f.close()'''
+
+    path = jsonpath + "/nearest.json"
+    params = utils.json_io(path, direction="in")
+
+    params["-txe"] = str(minx) + " " + str(maxx)
+    params["-tye"] = str(miny) + " " + str(maxy)
+    params["-outsize"] = str(deltx * area_multiplier) + " " + str(delty * area_multiplier)
+    params["-a"]["nodata"] = str(nodata)
+    params["src_datasource"] = folder + id + "_keep_row.vrt"
+    params["dst_filename"] = folder + id + "_row.tiff"
+
+    # build gdal_grid request
+    text = grd.build_gdal_grid_string(params, outtext=False)
+    print(text)
+    text = ["gdal_grid"] + text
+    print(text)
+
+    # call gdal_grid
+    print("Getting the row raster")
+    out, err = utils.run_tool(text)
+    print("output" + out)
+    if err:
+        print("error:" + err)
+        raise Exception("gdal grid failed")
+
+    # upload to numpy
+    d = gdal.Open(folder + id + "_row.tiff")
+    band = d.GetRasterBand(1)
+    # apply index
+    row_indexed = gdalIO.apply_index_to_single_band(band,index)  # this is the last index from the fruit count, all the indexes are the same
+    d = None
+
+    # collect statistics for the comparisons
+    stats = {}
+    # mean=[]
+    # std=[]
+
+    #######################################################
+
+    ####### get the indexed array for raw count
+    if 'raw' in counts:
+        index_raw, r_indexed_raw, properties_raw = fileIO.load_object(folder + id + "_indexedarray_rawfruit")
+
+    ####### get the indexed array for visible count
+    if 'visible' in counts:
+        index_visible, r_indexed_visible, properties_visible = fileIO.load_object(folder + id + "_indexedarray_visiblefruit")
+
+    ###########################
+    # upload to numpy
+    d = gdal.Open(folder + id + "_row.tiff")
+    band = d.GetRasterBand(1)
+    # apply index
+    row_indexed = gdalIO.apply_index_to_single_band(band,index)  # this is the last index from the fruit count, all the indexes are the same
+
+
+    geotr = d.GetGeoTransform()    # get the grotransfor to be used later during kriging, looks like gdal_grid set the origin in the bottom left!!!
+
+    d = None
+
+
+    if force_interpolation_by_row:
+
+        ## make temporary directory to store the interpolated vineyard rows
+        #################################################
+        tempfolder = folder + "/temprasters/"
+        os.mkdir(tempfolder)
+
+        # define new rasters increasing the data filtering and interpolating
+        for step in steps:
+
+            # filter data by step
+            k, d = filter.filter_bystep(keep, step=step, rand=random_filter, first_last=first_last,rowname="row")
+            k.to_csv(folder + id + "_keep_step" + str(step) + ".csv", index=False)
+            d.to_csv(folder + id + "_discard_step" + str(step) + ".csv", index=False)
+
+            # find unique row numbers
+            rows = k["row"].unique()
+
+            # add dictionary for this step
+            stats[step] = {}
+            for clr in colorgrades:
+                stats[step][clr] = {}
+                for row in rows:
+                    stats[step][clr][row] = {}
+                    stats[step][clr][row]['truth'] = []
+                    stats[step][clr][row]['interpolated'] = []
+
+
+            #calculate max distance between points to, to make things easier I am not doing it row by row
+            if random_filter: max_point_distance_all = utils.max_point_distance(k, "lon", "lat", "row", direction=rowdirection)
+            #extract the data to be used to build the variogram
+            vardata = k[["lon", "lat", "visible_fruit_per_m"]].values #todo what about raw?
+            varmean = np.mean( vardata[:, 2]) #todo is this necessary here?
+            # here we calculate the global variogram for visible_fruit_per_m
+            if variogram == "global":
+                hh = 1 / area_multiplier
+                maxlagdistance = max_point_distance_all + 0.5 if random_filter else 0.5 * step
+                outfile = folder + id + "_globalsemivariogram_" + "visible" + "_step" + str(step)
+                semivariogram = get_variogram(vardata, hh, maxlagdistance, outfile)
+
+
+            for clr in counts:
+
+                for row in rows:
+
+                    # initialize grid as numpy array, filled in with nodata value (-1)
+                    # initialize grid as numpy array, filled in with nodata value (-1)
+                    grid = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
+                    grid_error = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
+
+                    # execute kriging
+                    #todo should be done for raw too?
+                    grid, grid_error = dokriging_byrow(k, row, step, "visible_fruit_per_m", grid, grid_error, semivariogram, random_filter,
+                                                       row_indexed, index, geotr, "counts", interp, rowdirection)
+
+                    # delete values less than zero and round the values
+                    grid[grid < 0] = nodata
+                    np.round(grid, rounddecimals, out=grid)
+
+                    # save grids to raster
+                    xsize = deltx * area_multiplier
+                    ysize = delty * area_multiplier
+                    gridpath = tempfolder + id + "_" + clr + "_step" + str(step) +  "_row" + str(row) + "_" + interp + variogram
+                    grid_errorpath = tempfolder + id + "_" + clr + "_step" + str(step) +  "_row" + str(row) + "_" + interp + variogram + "_error"
+
+                    savegrids(grid, gridpath, grid_error, grid_errorpath, xsize, ysize, geotr, nodata, epsg)
+
+
+            # extract statistics for raw and visible
+            for clr in colorgrades:
+
+
+                for count in counts:
+
+                    print("calculate statistics for "+count+" berrie step" + str(step) + "color" + clr)
+                    for row in rows:
+
+                        '''
+                        # upload to numpy
+                        d = gdal.Open(tempfolder + id + "_raw_step" + str(step) + "_row"+str(row) + ".tiff")
+                        band = d.GetRasterBand(1)
+                        # apply index
+                        new_r_indexed_raw = gdalIO.apply_index_to_single_band(band,
+                                                                              index)  # this is the last index from the fruit count
+                        d = None
+                        '''
+
+                        d = gdal.Open(tempfolder + id + "_" + count + "_step" + str(step) +  "_row" + str(row) + "_" + interp + variogram + ".tiff")
+                        band = d.GetRasterBand(1)
+                        # apply index
+                        new_r_indexed_visible = gdalIO.apply_index_to_single_band(band,
+                                                                                  index)  # this is the last index from the fruit count
+
+
+                        d = None
+
+                        if new_r_indexed_visible.min() == nodata:
+                            warnings.warn(
+                                "indexed data visible berry per meters has nodata values, the current implementation will"
+                                " count this pixels as nozero values", RuntimeWarning)
+                            new_r_indexed_visible[new_r_indexed_visible == nodata] = 'nan'
+
+
+                        #update structure with partial data
+                        # get a mask for the current row
+                        mask = row_indexed == row
+                        # statistics for current row
+                        # average, std, totalarea,total nonzero area, total zeroarea, total raw fruit count,
+                        # average raw fruit count, std raw fruit count ,total visible fruitxm, average visible fruitXm, std visible fruitXm
+
+                        stats[step][clr][row]['truth'] = [None, None, None, None, None,
+                                              #r_indexed_raw[0, :][mask].sum(),
+                                              #r_indexed_raw[0, :][mask].mean(),
+                                              #r_indexed_raw[0, :][mask].std(),
+                                              r_indexed_visible[0, :][mask].sum(),
+                                              r_indexed_visible[0, :][mask].mean(),
+                                              r_indexed_visible[0, :][mask].std()]
+
+                        #stats[step][clr][row]['interpolated'] = [None, None, None, None, None,
+                                                     #new_r_indexed_raw[mask].sum(),
+                                                     #new_r_indexed_raw[mask].mean(),
+                                                     #new_r_indexed_raw[mask].std(),
+                        #                             new_r_indexed_visible[mask].sum(),
+                        #                             new_r_indexed_visible[mask].mean(),
+                        #                             new_r_indexed_visible[mask].std()]
+
+                        stats[step][clr][row]['interpolated'] = [None, None, None, None, None,
+                                                            # np.nansum(new_r_indexed_raw[mask]),
+                                                            # np.nanmean(new_r_indexed_raw[mask]),
+                                                            # np.nanstd(new_r_indexed_raw[mask]),
+                                                            np.nansum(new_r_indexed_visible[mask]),
+                                                            np.nanmean(new_r_indexed_visible[mask]),
+                                                            np.nanstd(new_r_indexed_visible[mask])]
+
+
+            for clr in colorgrades:
+
+                ###calculate semivariogram , we calculate from all the points
+                # extract the data to be used to build the variogram
+                vardata = k[["lon", "lat", clr.lower()]].values
+                varmean = np.mean(vardata[:, 2]) #todo is this necessary here?
+                # here we calculate the global variogram for visible_fruit_per_m
+                if variogram == "global":
+                    hh = 1 / area_multiplier
+                    maxlagdistance = max_point_distance_all + 0.5 if random_filter else 0.5 * step
+                    outfile = folder + id + "_globalsemivariogram_" + clr.lower() + "_step" + str(step)
+                    semivariogram = get_variogram(vardata, hh, maxlagdistance, outfile)
+
+
+                #for each row if random calculate the max distance for the current row
+                #execute interpolation for jus the row points
+                #calculate statistics for the row and fill in the output data structure
+
+                for row in rows:
+
+                    # initialize grid as numpy array, filled in with nodata value (-1)
+                    # initialize grid as numpy array, filled in with nodata value (-1)
+                    grid = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
+                    grid_error = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
+
+                    #do kriging
+                    grid, grid_error = dokriging_byrow(k, row, step, clr.lower(), grid, grid_error, semivariogram, random_filter,
+                                                       row_indexed, index, geotr, "colors", interp, rowdirection)
+
+                    # round the values to avoid overflows when calculating statistics
+                    np.round(grid, rounddecimals, out=grid)
+
+                    # save grids to raster
+                    xsize = deltx * area_multiplier
+                    ysize = delty * area_multiplier
+                    gridpath = tempfolder + id + "_" + clr + "_step" + str(step) + "_row" + str(row) + "_" + interp + variogram
+                    grid_errorpath = tempfolder + id + "_" + clr + "_step" + str(step) + "_row" + str(row) + "_" + interp + variogram + "_error"
+
+                    savegrids(grid, gridpath, grid_error, grid_errorpath, xsize, ysize, geotr, nodata, epsg)
+
+
+                    # upload to numpy
+                    d = gdal.Open(tempfolder + id + "_" + clr + "_step" + str(step) + "_row" + str(row) + "_" + interp + variogram + ".tiff")
+                    band = d.GetRasterBand(1)
+                    # apply index
+                    new_r_indexed = gdalIO.apply_index_to_single_band(band,index)  # this is the last index from the fruit count
+
+                    d = None
+
+                    if new_r_indexed.min() == nodata:
+                        warnings.warn(
+                            "indexed data for colorgrade " + clr + " has nodata values, the current implementation will"
+                                                                   " count this pixels as nozero values",RuntimeWarning)
+                        new_r_indexed[new_r_indexed == nodata] = 'nan'  # careful nan is float
+
+
+                    # calculate average, std, total area (here a pixel is 0.25 m2,
+                    # totla area for pixel > 0, total area for pixels with 0 value
+
+                    ####### get the indexed array for this colour grade
+
+                    # d = gdal.Open(folder + id + "_" + clr + ".tiff")
+                    # band = d.GetRasterBand(1)
+                    # r_indexed = gdalIO.apply_index_to_single_band(band, index) # this is the last index from the fruit count
+                    # d = None
+                    index, r_indexed, properties = fileIO.load_object(folder + id + "_indexedarray_" + clr)
+
+                    # update structure with partial data
+                    area = math.pow(1 / area_multiplier, 2)
+                    # get a mask for the current row
+                    mask = row_indexed == row
+                    #fill in with data
+                    partial_truth_data = stats[step][clr][row]['truth']
+                    partial_truth_data[:5] = [r_indexed[0, :][mask].mean(), r_indexed[0, :][mask].std(),
+                    r_indexed[0, :][mask].shape[0] * area,
+                    np.count_nonzero(r_indexed[0, :][mask]) * area,
+                    r_indexed[0, :][mask][r_indexed[0, :][mask] == 0].shape[0] * area]
+
+                    partial_interpolated_data = stats[step][clr][row]['interpolated']
+
+                    '''partial_interpolated_data[:5] = [new_r_indexed[mask].mean(), new_r_indexed[mask].std(),
+                    new_r_indexed[mask].shape[0] * area,
+                    np.count_nonzero(new_r_indexed[mask]) * area,
+                    new_r_indexed[mask][new_r_indexed[mask] == 0].shape[0] * area]'''
+
+                    partial_interpolated_data[:5] = [np.nanmean(new_r_indexed[mask]), np.nanstd(new_r_indexed[mask]),
+                                           new_r_indexed[mask].shape[0] * area,
+                                           np.count_nonzero(new_r_indexed[mask]) * area,
+                                           new_r_indexed[mask][new_r_indexed[mask] == 0].shape[0] * area]
+
+
+    else: ################## no force interpolation by row
+
+        # define new rasters increasing the data filtering and interpolating
+        for step in steps:
+            # add dictionary for this step
+            stats[step] = {}
+
+            # filter data by step
+            k, d = filter.filter_bystep(keep, step=step, rand=random_filter, first_last=first_last,rowname="row")
+            # if random_filter we will set the radius to the max distance between points in a row
+            if random_filter: max_point_distance = utils.max_point_distance(k, "lon", "lat", "row", direction=rowdirection)
+
+            '''
+            i already projected before
+            west, north = utils.reproject_coordinates(k, "epsg:32611", "lon", "lat", False)
+            filter.set_field_value(k, west, "lon")
+            filter.set_field_value(k, north, "lat")
+            filter.set_field_value(k, 0, "keepa")
+            filter.set_field_value(k, 0, "keepb")
+            filter.set_field_value(k, 0, "keepc")
+            filter.set_field_value(k, 0, "keepd")'''
+            k.to_csv(folder + id + "_keep_step" + str(step) + ".csv", index=False)
+
+            '''west, north = utils.reproject_coordinates(d, "epsg:32611", "lon", "lat", False)
+            filter.set_field_value(d, west, "lon")
+            filter.set_field_value(d, north, "lat")
+            filter.set_field_value(d, 0, "keepa")
+            filter.set_field_value(d, 0, "keepb")
+            filter.set_field_value(d, 0, "keepc")
+            filter.set_field_value(d, 0, "keepd")'''
+            d.to_csv(folder + id + "_discard_step" + str(step) + ".csv", index=False)
+
+            if random_filter: radius = max_point_distance + 0.5
+            else: radius = 0.5 * step
+
+            ''' grid parameters to build the numpy array
+            str(minx) + " " + str(maxx)
+            str(miny) + " " + str(maxy)
+            str(deltx * area_multiplier) + " " + str(delty * area_multiplier)
+            '''
+
+            #########################
+
+            # initialize the global kdtree index (we'll use this also for the colors
+            xydata = k[["lon", "lat"]].values
+            tree = kdtree.cKDTree(xydata)
+
+            # extract the data to be used to build the variogram
+            vardata = k[["lon", "lat", "visible_fruit_per_m"]].values
+            varmean = np.mean(vardata[:, 2]) #todo is this useful?
+
+            if variogram == "global":
+                hh = 1 / area_multiplier
+                outfile = folder + id + "_globalsemivariogram_" + "visible" + "_step" + str(step)
+                semivariogram = get_variogram(vardata, hh, radius, outfile)
+
+            # initialize grid as numpy array, filled in with nodata value (-1)
+            grid = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
+            grid_error = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
+
+            grid, grid_error = dokriging(vardata, grid, grid_error, semivariogram, index, geotr, "counts", interp, tree,radius)
+
+            # delete values less than zero and round the values
+            grid[grid < 0] = nodata
+            np.round(grid, rounddecimals, out=grid)
+
+            # save grids to raster
+            xsize = deltx * area_multiplier
+            ysize = delty * area_multiplier
+            gridpath = folder + id + "_visible_step" + str(step) + "_" + interp + variogram
+            grid_errorpath = folder + id + "_visible_step" + str(step) + "_" + interp + variogram + "_error"
+            savegrids(grid, gridpath, grid_error, grid_errorpath, xsize, ysize, geotr, nodata, epsg)
+
+
+            '''
+            # upload to numpy
+            d = gdal.Open(folder + id + "_raw_step" + str(step) + ".tiff")
+            band = d.GetRasterBand(1)
+            # apply index
+            new_r_indexed_raw = gdalIO.apply_index_to_single_band(band,
+                                                                  index)  # this is the last index from the fruit count
+            d = None
+            '''
+
+            d = gdal.Open(folder + id + "_visible_step" + str(step) + "_" + interp + variogram + ".tiff")
+            band = d.GetRasterBand(1)
+            # apply index
+            new_r_indexed_visible = gdalIO.apply_index_to_single_band(band,
+                                                                      index)  # this is the last index from the fruit count
+            d = None
+
+            if new_r_indexed_visible.min() == nodata:
+                warnings.warn(
+                    "indexed data visible berry per meters has nodata values, the current implementation will"
+                                                           " count this pixels as nozero values", RuntimeWarning)
+                new_r_indexed_visible[new_r_indexed_visible == nodata] = 'nan'
+
+
+            # for clr in ["a"]:
+            for clr in colorgrades:
+
+                ############################### colors
+                vardata = k[["lon", "lat", clr.lower()]].values
+                varmean = np.mean(vardata[:, 2]) #todo is this useful?
+
+                if variogram == "global":
+                    hh = 1 / area_multiplier
+                    outfile = folder + id + "_globalsemivariogram_" + clr.lower() + "_step" + str(step)
+                    semivariogram = get_variogram(vardata, hh, radius, outfile)
+
+                # initialize grid as numpy array, filled in with nodata value (-1)
+                grid = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
+                grid_error = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
+
+                grid, grid_error = dokriging(vardata, grid, grid_error, semivariogram, index, geotr, "colors", interp,tree, radius)
+
+                # round the values to avoid overflows when calculating statistics
+                np.round(grid, rounddecimals, out=grid)
+
+                # save grids to raster
+                xsize = deltx * area_multiplier
+                ysize = delty * area_multiplier
+                gridpath = folder + id + "_" + clr + "_step" + str(step) + "_" + interp + variogram
+                grid_errorpath = folder + id + "_" + clr + "_step" + str(step) + "_" + interp + variogram + "_error"
+                savegrids(grid, gridpath, grid_error, grid_errorpath, xsize, ysize, geotr, nodata, epsg)
+
+                # upload to numpy
+                d = gdal.Open(folder + id + "_"+clr+"_step" + str(step) + "_" + interp + variogram + ".tiff")
+                band = d.GetRasterBand(1)
+                # apply index
+                new_r_indexed = gdalIO.apply_index_to_single_band(band,
+                                                                  index)  # this is the last index from the fruit count
+                d = None
+
+                # check if all pixels have a value, otherwise assign nan to nodata value
+                if new_r_indexed.min() == nodata:
+                    warnings.warn(
+                        "indexed data for colorgrade " + clr + " has nodata values, the current implementation will"
+                                                               " count this pixels as nozero values", RuntimeWarning)
+                    new_r_indexed[new_r_indexed == nodata] = 'nan'  # careful nan is float
+
+
+                # calculate average, std, total area (here a pixel is 0.25 m2,
+                # total area for pixel > 0, total area for pixels with 0 value
+
+                ####### get the indexed array for this colour grade
+
+                # d = gdal.Open(folder + id + "_" + clr + ".tiff")
+                # band = d.GetRasterBand(1)
+                # r_indexed = gdalIO.apply_index_to_single_band(band, index) # this is the last index from the fruit count
+                # d = None
+                index, r_indexed, properties = fileIO.load_object(folder + id + "_indexedarray_" + clr)
+
+                stats[step][clr] = {}
+
+                for i in np.unique(row_indexed):  # get the row numbers
+
+                    area = math.pow(1 / area_multiplier, 2)
+
+                    # add dictionary for this row
+                    stats[step][clr][i] = {}
+
+                    # get a mask for the current row
+                    mask = row_indexed == i
+                    # statistics for current row
+
+                    # average, std, totalarea,total nonzero area, total zeroarea, total raw fruit count,
+                    # average raw fruit count, std raw fruit count ,total visible fruitxm, average visible fruitXm, std visible fruitXm
+
+                    # r_indexed is 2d , while new_r_indexed and mask are 1d
+                    stats[step][clr][i]['truth'] = [r_indexed[0, :][mask].mean(), r_indexed[0, :][mask].std(),
+                                                    r_indexed[0, :][mask].shape[0] * area,
+                                                    np.count_nonzero(r_indexed[0, :][mask]) * area,
+                                                    r_indexed[0, :][mask][r_indexed[0, :][mask] == 0].shape[0] * area,
+                                                    #r_indexed_raw[0, :][mask].sum(),
+                                                    #r_indexed_raw[0, :][mask].mean(),
+                                                    #r_indexed_raw[0, :][mask].std(),
+                                                    r_indexed_visible[0, :][mask].sum(),
+                                                    r_indexed_visible[0, :][mask].mean(),
+                                                    r_indexed_visible[0, :][mask].std()]
+
+
+                    ''' 
+                    stats[step][clr][i]['interpolated'] = [new_r_indexed[mask].mean(), new_r_indexed[mask].std(),
+                                                           new_r_indexed[mask].shape[0] * area,
+                                                           np.count_nonzero(new_r_indexed[mask]) * area,
+                                                           new_r_indexed[mask][new_r_indexed[mask] == 0].shape[0] * area,
+                                                           #new_r_indexed_raw[mask].sum(),
+                                                           #new_r_indexed_raw[mask].mean(),
+                                                           #new_r_indexed_raw[mask].std(),
+                                                           new_r_indexed_visible[mask].sum(),
+                                                           new_r_indexed_visible[mask].mean(),
+                                                           new_r_indexed_visible[mask].std()]
+                    '''
+
+                    stats[step][clr][i]['interpolated'] = [ np.nanmean(new_r_indexed[mask]),  np.nanstd(new_r_indexed[mask]),
+                                                            new_r_indexed[mask].shape[0] * area,
+                                                            np.count_nonzero(new_r_indexed[mask]) * area,
+                                                            new_r_indexed[mask][new_r_indexed[mask] == 0].shape[0] * area,
+                                                            # np.nansum(new_r_indexed_raw[mask]),
+                                                            # np.nanmean(new_r_indexed_raw[mask]),
+                                                            # np.nanstd(new_r_indexed_raw[mask]),
+                                                            np.nansum(new_r_indexed_visible[mask]),
+                                                            np.nanmean(new_r_indexed_visible[mask]),
+                                                            np.nanstd(new_r_indexed_visible[mask])]
+
+
+                    # compare = r_indexed[0,:][mask] - new_r_indexed[mask]
+                    # stats[clr][step][i]['comparison'] = [compare.mean(),compare.std()]
+                    # pass
+                    # calculate average and variance for this surface
+                    # mean.append(compare.mean())
+                    # std.append(compare.std())
+
+    # print(mean)
+    # print(std)
+    return id, stats
+    # {2: {"a": {1: {'truth': {}, 'interpolated': {}}}}}
+
+
+
+
 ####OUTPUT STATISTICS#################
 
 
@@ -1743,9 +2984,9 @@ def test_interpret_result(stats, id, folder, colmodel=None):
         np.savetxt(folder + id +"_"+j+"_output.csv",output , fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='', comments='')
 
 
-def test_compare_raster_totruth(point, id, folder, epsg=32611, step=[2, 3, 4, 5, 6, 7, 8, 9, 10],
+def test_compare_raster_totruth(point, id, folder, epsg=32611, steps=[2, 3, 4, 5, 6, 7, 8, 9, 10],
                                 removeduplicates=True, clean=None,
-                                colorgrade=None, counts=None):
+                                colorgrade=None, counts=None, suffix="" ):
     """
     comparing original point values with the underlying pixel values and save comparison to disk
     use this when the workflow was using force_interpolation_by_row=False
@@ -1756,7 +2997,7 @@ def test_compare_raster_totruth(point, id, folder, epsg=32611, step=[2, 3, 4, 5,
     :param id: operation id
     :param folder: the folder with point
     :param epsg: epsg code for spatial reference
-    :param step: the steps to consider
+    :param steps: the steps to consider
     :param removeduplicates: true to get average value for duplicate points
     :param clean: chage first value with the second [[-1],[0]] , useful to clean nodata values
     :param tempfolder: name of the folder storing the rasters by row
@@ -1789,8 +3030,9 @@ def test_compare_raster_totruth(point, id, folder, epsg=32611, step=[2, 3, 4, 5,
 
 
     # define a list of files
-    rasters = [folder + id + "_" + y + "_step" + str(x) + ".tiff" for x in step for y in colorgrade]
-    rasters2 = [folder + id + "_" + y + "_step" + str(x) + ".tiff" for x in step for y in counts]
+    rasters = [folder + id + "_" + y + "_step" + str(x) + suffix + ".tiff" for x in steps for y in colorgrade]
+    rasters2 = [folder + id + "_" + y + "_step" + str(x) + suffix + ".tiff" for x in steps for y in counts]
+
 
     spatialRef = osr.SpatialReference()
     spatialRef.ImportFromEPSG(epsg)
@@ -1804,7 +3046,7 @@ def test_compare_raster_totruth(point, id, folder, epsg=32611, step=[2, 3, 4, 5,
         c.append(stat)
 
     arr = np.transpose(np.asarray(c))
-    newdf = pd.DataFrame(arr, columns=["step" + str(x) + y for x in step for y in colorgrade])
+    newdf = pd.DataFrame(arr, columns=["step" + str(x) + y for x in steps for y in colorgrade])
 
     c = []
     for r in rasters2:
@@ -1812,7 +3054,7 @@ def test_compare_raster_totruth(point, id, folder, epsg=32611, step=[2, 3, 4, 5,
         c.append(stat)
 
     arr = np.transpose(np.asarray(c))
-    newdf2 = pd.DataFrame(arr, columns=["step" + str(x) + y for x in step for y in counts])
+    newdf2 = pd.DataFrame(arr, columns=["step" + str(x) + y for x in steps for y in counts])
 
     outdf = pd.concat([df, newdf, newdf2], axis=1)
 
@@ -1822,9 +3064,9 @@ def test_compare_raster_totruth(point, id, folder, epsg=32611, step=[2, 3, 4, 5,
     outdf.to_csv(folder + id + "_ERRORSTATISTICS.csv")
 
 
-def test_compare_raster_totruth_byrow(point, id, folder, epsg=32611, step=[2, 3, 4, 5, 6, 7, 8, 9, 10],
+def test_compare_raster_totruth_byrow(point, id, folder, epsg=32611, steps=[2, 3, 4, 5, 6, 7, 8, 9, 10],
                                       removeduplicates=True,
-                                      clean=None, tempfolder="/temprasters/", colorgrade=None, counts=None):
+                                      clean=None, tempfolder="/temprasters/", colorgrade=None, counts=None, suffix="" ):
     """
     comparing original point (with no filter) values with the underlying pixel values and save comparison to disk
     use this when the workflow was using force_interpolation_by_row=True
@@ -1836,7 +3078,7 @@ def test_compare_raster_totruth_byrow(point, id, folder, epsg=32611, step=[2, 3,
     :param id: operation id
     :param folder: the folder with point
     :param epsg: epsg code for spatial reference
-    :param step: the steps to consider
+    :param steps: the steps to consider
     :param removeduplicates: true to get average value for duplicate points
     :param clean: chage first value with the second [[-1],[0]] , useful to clean nodata values
     :param tempfolder: name of the folder storing the rasters by row
@@ -1879,10 +3121,10 @@ def test_compare_raster_totruth_byrow(point, id, folder, epsg=32611, step=[2, 3,
     for row in rows:
         row = int(row)
         # this will be in order a,b,c,d   and raw,visible
-        rasters[row] = [folder + tempfolder + id + "_" + y + "_step" + str(x) + "_row" + str(row) + ".tiff" for x in
-                        step for y in colorgrade]
-        rasters2[row] = [folder + tempfolder + id + "_" + y + "_step" + str(x) + "_row" + str(row) + ".tiff" for x in
-                         step for y in counts]
+        rasters[row] = [folder + tempfolder + id + "_" + y + "_step" + str(x) + "_row" + str(row) + suffix + ".tiff" for x in
+                        steps for y in colorgrade]
+        rasters2[row] = [folder + tempfolder + id + "_" + y + "_step" + str(x) + "_row" + str(row) + suffix + ".tiff" for x in
+                         steps for y in counts]
 
     # define a gdal spatial reference object
     spatialRef = osr.SpatialReference()
@@ -1903,7 +3145,7 @@ def test_compare_raster_totruth_byrow(point, id, folder, epsg=32611, step=[2, 3,
 
     # we stack vertically all the rows and convert to dataframe
     arr_colour = np.vstack(c)
-    newdf = pd.DataFrame(arr_colour, columns=["step" + str(x) + y for x in step for y in colorgrade])
+    newdf = pd.DataFrame(arr_colour, columns=["step" + str(x) + y for x in steps for y in colorgrade])
 
     c = []
     for row in rows:
@@ -1919,7 +3161,7 @@ def test_compare_raster_totruth_byrow(point, id, folder, epsg=32611, step=[2, 3,
         c.append(np.transpose(np.asarray(raster_row)))
 
     arr_count = np.vstack(c)
-    newdf2 = pd.DataFrame(arr_count, columns=["step" + str(x) + y for x in step for y in counts])
+    newdf2 = pd.DataFrame(arr_count, columns=["step" + str(x) + y for x in steps for y in counts])
 
     # stack the 3 dataframe horizontally
     outdf = pd.concat([df, newdf, newdf2], axis=1)
@@ -2000,7 +3242,7 @@ def estimate_berries_byrow(folder,id, steps=[2, 3, 4, 5, 6, 7, 8, 9, 10]):
 ########CALCULATE RMSE#######################
 
 
-def calculate_rmse_row_0(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a","b","c","d"]):
+def calculate_rmse_row_0(folder, id, steps=[2, 3, 4, 5, 6, 7, 8, 9, 10], colorgrades = ["a", "b", "c", "d"]):
     """
     rmse based on comparison with the rasterized points
     """
@@ -2011,14 +3253,14 @@ def calculate_rmse_row_0(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = [
     outtext = ""
 
     # calculate rmse for visible count (this is the same for all colour grade files)
-    for e,c in enumerate(nsteps):
+    for e,c in enumerate(steps):
         outtext += "step"+str(c)+"_visible_avg\t" + str(utils.rmse( file["step"+str(c)+"_visible_avg"].values, file["visible_avg"].values)) + "\n"
 
     for e,c in enumerate(colorgrades):
         #for each step
         path = folder + id + "_" + c + "_output.csv"
         file = pd.read_csv(path)
-        for j,x in enumerate(nsteps):
+        for j,x in enumerate(steps):
 
             outtext += "step" + str(x) + "_avg\t"+ str(utils.rmse(file["step" + str(x) + "_avg"].values, file["avg"].values)) + "\n"
 
@@ -2026,20 +3268,20 @@ def calculate_rmse_row_0(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = [
         f.write(outtext)
 
 
-def calculate_rmse_row(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a","b","c","d"]):
+def calculate_rmse_row(folder, id, steps=[2, 3, 4, 5, 6, 7, 8, 9, 10], colorgrades = ["a", "b", "c", "d"]):
     """
     rmse based on comparison with the original points (this is preferred to calculate_rmse_row_0)
     rmse are calculated for each row, the number of items are the points of the row
     the starting file is the ERRORSTATISTICS.csv file which contains values for the original points and the underlying pixels
     :param folder: 
     :param id: 
-    :param nsteps: 
+    :param steps:
     :param colorgrades: 
     :return: 
     """
 
     rowname = "row"
-    stepcount = len(nsteps)
+    stepcount = len(steps)
     colorcount = len(colorgrades)
 
     path = folder + id + "_ERRORSTATISTICS.csv"
@@ -2059,7 +3301,7 @@ def calculate_rmse_row(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a
         arr[i, 1] = fdf['visible_fruit_per_m'].mean()
 
         # calculate rmse for visible count
-        for e, c in enumerate(nsteps):
+        for e, c in enumerate(steps):
             arr[i,2 + e] = utils.rmse(fdf["step" + str(c) + "visible"].values, fdf["visible_fruit_per_m"].values)
 
         #set average value for colorgrades for the current row
@@ -2070,19 +3312,19 @@ def calculate_rmse_row(folder,id, nsteps=[2,3,4,5,6,7,8,9,10], colorgrades = ["a
         # calculate root mean square error for colorgrades
         for e,c in enumerate(colorgrades):
             idxstart = 2 + stepcount + colorcount + (e * stepcount)
-            for j, x in enumerate(nsteps):
+            for j, x in enumerate(steps):
                 arr[i, idxstart + j] = utils.rmse(fdf["step" + str(x) + c].values, fdf[c].values)
 
     #set xolumn names and save as a csv file
     cols = ['row', 'visible_avg']
-    cols += ["visible_step"+str(s)+"_rmse" for s in nsteps]
+    cols += ["visible_step" + str(s) +"_rmse" for s in steps]
     cols +=  [i + "_avg" for i in colorgrades]
-    cols += ["step" + str(i) + "_" + c + "_rmse" for c in colorgrades for i in nsteps]
+    cols += ["step" + str(i) + "_" + c + "_rmse" for c in colorgrades for i in steps]
     outcols = ','.join(cols)
     np.savetxt(folder + id + "_rsme_row.csv",arr , fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='', comments='')
 
 
-def calculate_rmse(folder,id,nsteps=[2,3,4,5,6,7,8,9,10]):
+def calculate_rmse(folder,id,steps=[2,3,4,5,6,7,8,9,10]):
     """
     Calculate the root mean square error for the visible per meter average and the estimated berries . The differences
     are calculated per number of vineyard rows and the number of items are the rows
@@ -2107,7 +3349,7 @@ def calculate_rmse(folder,id,nsteps=[2,3,4,5,6,7,8,9,10]):
     arr = np.zeros((1, len(steps)*2))
 
     #iterate the steps and fill in the array
-    for i,s in enumerate(nsteps):
+    for i,s in enumerate(steps):
 
         #rmse for visible_avg, add to the output array, append the column name
         x =  math.sqrt((np.sum(np.power(df["step"+str(s)+"_delta_avg"].values,2))/nrows))
@@ -2135,9 +3377,6 @@ def chart_rmse(folder,id, useperc=True):
     :return: None
     """
 
-    from bokeh.plotting import figure
-    from bokeh.io import output_file,  save
-
     #open pandas dataframe
     path = folder + id + "_rsme.csv"
     df = pd.read_csv(path)
@@ -2145,6 +3384,9 @@ def chart_rmse(folder,id, useperc=True):
     ncols = df.shape[1]
     #the categorical labels for x axis (step2,step3,step4,....)
     x_labels = [i.split("_")[0] for i in df.columns][:int(len(df.columns) / 2)]
+
+    #x_label_num =  [ int(n[4:]) for n in x_labels].sort()
+    #x_labels_all =  ["step"+str(i) for i in range(2,x_label_num[-1]+1)]
 
     #convert to percentage
     if useperc:
@@ -2166,6 +3408,113 @@ def chart_rmse(folder,id, useperc=True):
     f.line(x_labels , df.values[0,int(ncols/2):], line_width=2)
     save(f)
 
+
+def compare_chart_rmse(folder,id,folder1,id1, outpath, useperc=True):
+    """
+    Compare the rmse for 2 datasets (  calculate_rmse() should be used beforehand to get the rmse)
+    :param folder:
+    :param id:
+    :param folder1:
+    :param id1:
+    :param outpath:
+    :param useperc:
+    :return:
+    """
+
+    ################# first dataset
+    #open pandas dataframe
+    path = folder + id + "_rsme.csv"
+    df = pd.read_csv(path)
+
+    ncols = df.shape[1]
+    #the categorical labels for x axis (step2,step3,step4,....)
+    x_labels = [int(i.split("_")[0][4:]) for i in df.columns][:int(len(df.columns) / 2)]
+
+    #x_label_num =  [ int(n[4:]) for n in x_labels].sort()
+    #x_labels_all =  ["step"+str(i) for i in range(2,x_label_num[-1]+1)]
+
+    #convert to percentage
+    if useperc:
+        x_labels = [int((1/i)*100) for i in x_labels]
+
+    ################### second dataset
+    # open pandas dataframe
+    path = folder1 + id1 + "_rsme.csv"
+    df1 = pd.read_csv(path)
+
+    ncols1 = df1.shape[1]
+    # the categorical labels for x axis (step2,step3,step4,....)
+    x_labels1 = [int(i.split("_")[0][4:]) for i in df1.columns][:int(len(df1.columns) / 2)]
+
+    # x_label_num =  [ int(n[4:]) for n in x_labels].sort()
+    # x_labels_all =  ["step"+str(i) for i in range(2,x_label_num[-1]+1)]
+
+    # convert to percentage
+    if useperc:
+        x_labels1 = [int((1/i)*100) for i in x_labels1]
+    #########################
+
+
+
+    ######prepare the labels
+    if useperc:
+        xlabels = sorted(list(set(x_labels + x_labels1)), reverse=True)
+        xlabels = [str(i) + "%" for i in xlabels]
+
+        x_labels = [str(i) + "%" for i in x_labels]
+        x_labels1 = [str(i) + "%" for i in x_labels1]
+
+    else:
+        xlabels = sorted(list(set(x_labels + x_labels1)))
+        xlabels = ["step"+str(i) for i in xlabels]
+
+        x_labels = ["step"+str(i) for i in x_labels]
+        x_labels1 = ["step"+str(i) for i in x_labels1]
+
+
+    #get infos
+    info = utils.json_io(folder+"/info.json", direction="in")
+    info1 = utils.json_io(folder1+"/info.json", direction="in")
+
+
+    ############################
+    #chart ["stepx_delta_avg_rmse"]
+    output_file(outpath+"/delta_avg_rmse_comparison.html",title="delta_avg_rmse_comarison")
+    f = figure(x_range=xlabels, title="Delta RMSE for average number of berries per vineyard row")
+    f.line(x_labels , df.values[0,0:int(ncols/2)], line_width=2, color="blue",legend=info["name"])
+    f.line(x_labels1 , df1.values[0,0:int(ncols1/2)], line_width=2,color="green",legend=info1["name"])
+
+    # making multiline labels /n and <br/> do not work
+    first_label = Label(x=40, y= (-30), x_units='screen', y_units='screen',
+                       text=info["name"].upper() + " -- Filter:" + info["filter_type"] +" -- Interpolation:" + info["interpolation"],
+                        render_mode='css',background_fill_color='white', background_fill_alpha=1.0)
+
+    second_label = Label(x=40, y= (-50), x_units='screen', y_units='screen',
+                         text=info1["name"].upper() + " -- Filter:" + info1["filter_type"] + " -- Interpolation:" + info1["interpolation"],
+                        render_mode='css',background_fill_color='white', background_fill_alpha=1.0)
+
+    f.add_layout(first_label)
+    f.add_layout(second_label)
+    save(f)
+
+    #chart ("stepx_delta_estimates_rmse")
+    output_file(outpath+"/delta_estimates_rmse_comparison.html",title="delta_estimates_rmse_comparison")
+    f = figure(x_range=xlabels, title="Delta RMSE for total number of berries per vineyard row")
+    f.line(x_labels, df.values[0,int(ncols/2):], line_width=2, color="blue",legend=info["name"])
+    f.line(x_labels1, df1.values[0,int(ncols1/2):], line_width=2,color="green", legend=info1["name"])
+
+    first_label = Label(x=40, y= (-30), x_units='screen', y_units='screen',
+                       text=info["name"].upper() + " -- Filter:" + info["filter_type"] +" -- Interpolation:" + info["interpolation"],
+                        render_mode='css',background_fill_color='white', background_fill_alpha=1.0)
+
+    second_label = Label(x=40, y= (-50), x_units='screen', y_units='screen',
+                         text=info1["name"].upper() + " -- Filter:" + info1["filter_type"] + " -- Interpolation:" + info1["interpolation"],
+                        render_mode='css',background_fill_color='white', background_fill_alpha=1.0)
+    f.add_layout(first_label)
+    f.add_layout(second_label)
+    save(f)
+
+
 def chart_estimated_berries(folder,id, steps=[], useperc=True):
     """Output charts of the estimated berries original data vs filtered data
     :param folder: folder path
@@ -2174,9 +3523,6 @@ def chart_estimated_berries(folder,id, steps=[], useperc=True):
     :param useperc: True to label steps as percentages
     :return: None
     """
-    from bokeh.plotting import figure
-    from bokeh.io import output_file,  save
-    from bokeh.models import NumeralTickFormatter
 
     path = folder + id + "_count_stats_byrow.csv"
 
@@ -2218,14 +3564,6 @@ def chart_estimates_comparison(folder, id, steps=[], useperc=True):
     starting file is the _count_stats_byrow.csv
 
     """
-
-    from sklearn import linear_model
-    from bokeh.plotting import figure
-    from bokeh.io import output_file,  save
-    from bokeh.models import NumeralTickFormatter, Label
-    from bokeh.palettes import d3
-    from scipy.spatial import ConvexHull
-
 
     if len(steps)>19:
         raise ValueError("number of steps cannot be more than 19")
@@ -2350,7 +3688,7 @@ def chart_estimates_comparison(folder, id, steps=[], useperc=True):
 
     ######show delta areas in one chart
 
-    colors = d3['Category20'][len(steps)+1]
+    colors = d3['Category20'][len(steps)+1] if len(steps)>3 else d3['Category20'][4]
 
     output_file(folder + "/charts/estimatedberries/estimatedberries_deltas/estimated_comparisons.html",
                 title="estimated_comparisons.html")
@@ -2383,11 +3721,6 @@ def chart_visible_berries(folder,id, steps=[], useperc=True):
     :param useperc:
     :return:
     """
-
-    from sklearn import linear_model
-    from bokeh.plotting import figure
-    from bokeh.io import output_file,  save
-    from bokeh.models import NumeralTickFormatter, Label
 
     cols = ["visible_fruit_per_m"] + [ "step"+str(s)+"visible" for s in steps]
 
@@ -2450,11 +3783,6 @@ def chart_colorgrades(folder,id, colors=[], steps=[], useperc=True):
     :param useperc:
     :return:
     """
-
-    from sklearn import linear_model
-    from bokeh.plotting import figure
-    from bokeh.io import output_file,  save
-    from bokeh.models import NumeralTickFormatter, Label
 
     cols = colors + ["step"+str(s)+ c.lower() for s in steps for c in colors]
 
@@ -2668,12 +3996,10 @@ if __name__ == "__main__":
     chart_rmse(folder, id)
     '''
 
-
     ####################################
-
+    '''
     steps = [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
     grades=['a','b','c','d']
-
     id= "a40b9fc7181184bf0b9835f830a677513"
     folder = "/vagrant/code/pysdss/data/output/text/analysis0806_steps2to100/" + id + "/"
     chart_rmse(folder,id,useperc=True)
@@ -2681,3 +4007,172 @@ if __name__ == "__main__":
     chart_estimates_comparison(folder, id, steps=steps)
     chart_visible_berries(folder, id, steps=steps)
     chart_colorgrades(folder,id,grades,steps, useperc=True)
+    '''
+    #######################################KRIGING#################################
+
+
+    def kriger_tests():
+        steps = [5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
+        steps = [50, 100]
+        grades = ['a', 'b', 'c', 'd']
+
+        interp = "simple"
+        variogram = "global"
+
+        id, stats = berrycolor_workflow_kriging(steps=steps, interp=interp, random_filter=False, first_last=False, force_interpolation_by_row=False,
+                             variogram = variogram,rowdirection="x", epsg="32611")
+
+        folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+        fileIO.save_object(folder + id + "_statistics_"+ interp, stats)
+
+        import pysdss.analytics.colorgrade.research.colorgrade_comparisons as comp
+
+        ##############################
+
+        #id = "a7aa8d3e709ce42a4ba17ebee02daf66f"
+        folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+        #folder = "/vagrant/code/pysdss/data/output/text/analysys1906_krigingsteps5to100/" + id + "/"
+
+        colmodel = ["avg", "std", "area", "nozero_area", "zero_area", "visible_count",
+                    "visible_avg", "visible_std"]
+
+        stats = fileIO.load_object(folder + id + "_statistics_" + interp)
+        comp.test_interpret_result(stats, id, folder, colmodel)
+
+        print("comparing to points")
+        point = folder + id + "_keep.csv"
+
+        comp.test_compare_raster_totruth(point, id, folder, steps=steps, clean=[[-1], [0]], counts=["visible"],
+                                         suffix="_" + interp + variogram)
+
+        print("calculate rmse")
+        comp.calculate_rmse_row(folder, id, steps=steps)
+        comp.estimate_berries_byrow(folder, id, steps=steps)
+        comp.calculate_rmse(folder, id, steps=steps)
+        print("make charts")
+        comp.chart_rmse(folder, id)
+        comp.chart_estimated_berries(folder, id, steps=steps, useperc=True)
+        comp.chart_estimates_comparison(folder, id, steps=steps)
+        comp.chart_visible_berries(folder, id, steps=steps)
+        comp.chart_colorgrades(folder, id, grades, steps, useperc=True)
+
+    #kriger_tests()
+
+    def comparematrices_tests():
+        from osgeo import gdal_array as gdar
+
+        d = gdal.Open(
+            "/vagrant/code/pysdss/data/output/text/afc3e0829d87e4aa19212923b3f44e519/afc3e0829d87e4aa19212923b3f44e519_d.tiff")
+        band = d.GetRasterBand(1)
+
+        g = d.GetGeoTransform()
+        print(d)
+
+        e = gdal.Open(
+            "/vagrant/code/pysdss/data/output/text/afc3e0829d87e4aa19212923b3f44e519/afc3e0829d87e4aa19212923b3f44e519_d_step50_ordinaryglobal.tiff")
+        band1 = e.GetRasterBand(1)
+        e.GetGeoTransform()
+
+        px = gdar.BandReadAsArray(band, 0, 0, band.XSize, band.YSize)
+        px1 = gdar.BandReadAsArray(band1, 0, 0, band1.XSize, band1.YSize)
+
+        pass
+
+
+    # comparematrices_tests()
+
+
+    def kriger_byrow_tests():
+        # steps = [5,6,7,8,9,10,20,30,50,100]
+        steps = [50, 100]
+        grades = ['a', 'b', 'c', 'd']
+        counts = ["visible"]
+        interp = "ordinary"
+        variogram = "global"
+
+        id, stats = berrycolor_workflow_kriging(steps=steps, colorgrades = grades, counts = counts,
+                             interp=interp, random_filter=False, first_last=False, force_interpolation_by_row=True,
+                             variogram = variogram,rowdirection="x", epsg="32611")
+
+
+        #id = "a54c4dd3232e64ab38dfcc8ad47103065"
+        folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+
+        fileIO.save_object(folder + id + "_statistics_"+ interp, stats)
+
+        import pysdss.analytics.colorgrade.research.colorgrade_comparisons as comp
+
+        colmodel = ["avg", "std", "area", "nozero_area", "zero_area", "visible_count",
+                    "visible_avg", "visible_std"]
+
+        stats = fileIO.load_object(folder + id + "_statistics_" + interp)
+
+        comp.test_interpret_result(stats, id, folder, colmodel)
+
+        point = folder + id + "_keep.csv"
+        comp.test_compare_raster_totruth_byrow(point, id, folder, steps=steps, clean=[[-1], [0]], counts=counts,
+                                               suffix="_" + interp + variogram)
+
+        print("calculate rmse")
+        comp.calculate_rmse_row(folder, id, steps=steps)
+        comp.estimate_berries_byrow(folder, id, steps=steps)
+        comp.calculate_rmse(folder, id, steps=steps)
+        print("make charts")
+        comp.chart_rmse(folder, id)
+        comp.chart_estimated_berries(folder, id, steps=steps, useperc=True)
+
+        comp.chart_estimates_comparison(folder, id, steps=steps)
+        comp.chart_visible_berries(folder, id, steps=steps)
+        comp.chart_colorgrades(folder, id, grades, steps, useperc=True)
+
+
+    #kriger_byrow_tests()
+
+
+    def outinfos_tests():
+        """
+        test output infos
+        :return:
+        """
+        steps = [5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
+        grades = ['a', 'b', 'c', 'd']
+        counts = ["visible"]
+
+        interp = "simple"
+        variogram = "global"
+
+        berrycolor_workflow_kriging(steps=steps, counts=counts,interp=interp, random_filter=False, first_last=False,
+                                                force_interpolation_by_row=False,
+                                                variogram=variogram, rowdirection="x", epsg="32611")
+
+        interp = "ordinary"
+        variogram = "global"
+        berrycolor_workflow_kriging(steps=steps, counts=counts,interp=interp, random_filter=True, first_last=True,
+                                                force_interpolation_by_row=True,
+                                                variogram=variogram, rowdirection="x", epsg="32611")
+
+        berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False, first_last=False,
+                              force_interpolation_by_row=False, rowdirection="x")
+
+        berrycolor_workflow_1(steps=[2, 3, 4], interp="average", random_filter=False, first_last=False,
+                              force_interpolation_by_row=False, rowdirection="x")
+    #outinfos_tests()
+
+
+    def comparisons_tests():
+
+        """tests
+        """
+
+        id = "a40b9fc7181184bf0b9835f830a677513"
+        folder = "/vagrant/code/pysdss/data/output/text/analysis0806_steps2to100/" + id + "/"
+
+        id1 = "a7aa8d3e709ce42a4ba17ebee02daf66f"
+        folder1 = "/vagrant/code/pysdss/data/output/text/analysys1906_krigingsteps5to100/" + id1 + "/"
+
+        outpath = "/vagrant/code/pysdss/data/output/text/"
+
+        compare_chart_rmse(folder, id, folder1, id1, outpath, useperc=False)
+
+
+    comparisons_tests()
