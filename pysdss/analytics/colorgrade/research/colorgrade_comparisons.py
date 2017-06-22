@@ -977,11 +977,11 @@ def berrycolor_workflow_1_original(steps=[2,3,4], interp="invdist"):
 
 ############################################   30 05 2017 ######################################
 
-##add parameter that specify we want random filtered data for row  ( take first/last and then random in between the 2)
-##add parameter to force inteerpolation for points in the same row only (for higher filters the interpolation radius will
+##added parameter that specify we want random filtered data for row  ( take first/last and then random in between the 2)
+##added parameter to force inteerpolation for points in the same row only (for higher filters the interpolation radius will
 ##overlap with points belonging to adjacent rows
 
-#so there are 8 possibilities for each interpolation method (so far inverse distance and moving average, kriging will follow)
+#so there are 8 possibilities for each interpolation method (distance and moving average, for simple/ordinary kriging use berrycolor_workflow_kriging)
 # ordered filter, first/last, free interpolation
 # ordered filter, no first/last, free interpolation
 # ordered filter, first/last, interpolation by row only
@@ -1020,6 +1020,7 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
     force_interpolation : true if i want to be sure the points belong to the current row only
     :return:
     """
+    area_multiplier = 2  # 2 to double the resulution and halve the pixel size to 0.5 meters
 
     if interp not in ["invdist", "average"]:
         raise ValueError("Interpolation should be 'invdist' or 'average'")
@@ -1047,8 +1048,6 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
             colorgrades=['a', 'b', 'c', 'd'],
             counts=["visible","raw"]
             )
-
-    return
 
     # create a directory to store settings
     # if not os.path.exists(experimentfolder + str(id)):
@@ -1124,7 +1123,7 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
     delty = maxy - miny  # height
     deltx = maxx - minx  # width
 
-    area_multiplier = 2  # 2 to double the resulution and halve the pixel size to 0.5 meters
+
 
     # 6 log a running process to the database
     # 7 save grid metadata and interpolation metadata to the database historic tables
@@ -1328,8 +1327,6 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
                     "fullname": folder + id + "_keep_step" + str(step) + ".csv", "easting": "lon", "northing": "lat",
                     "elevation": "visible_fruit_per_m", "rowname": "row"}
             utils2.make_vrt(xml_row, data, folder + id + "_keep_visible_step" + str(step) + ".vrt")
-
-
 
             # prepare interpolation parameters
             if interp == "invdist":
@@ -2144,6 +2141,7 @@ def berrycolor_workflow_kriging(steps=[30], colorgrades = ['a','b','c','d'], cou
     :return:
     """
 
+    area_multiplier = 2  # 2 to double the resulution and halve the pixel size to 0.5 meters
 
     if variogram not in ["global", "byrow", "local"]:
         raise ValueError("Variogram should be 'global' or 'byrow' or 'local'")
@@ -2188,7 +2186,6 @@ def berrycolor_workflow_kriging(steps=[30], colorgrades = ['a','b','c','d'], cou
             counts,
             variogram
             )
-    return
 
     # create a directory to store settings
     # if not os.path.exists(experimentfolder + str(id)):
@@ -2265,7 +2262,7 @@ def berrycolor_workflow_kriging(steps=[30], colorgrades = ['a','b','c','d'], cou
     delty = maxy - miny  # height
     deltx = maxx - minx  # width
 
-    area_multiplier = 2  # 2 to double the resulution and halve the pixel size to 0.5 meters
+
 
     # log a running process to the database
     # save grid metadata and interpolation metadata to the database historic tables
@@ -4025,8 +4022,6 @@ if __name__ == "__main__":
         folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
         fileIO.save_object(folder + id + "_statistics_"+ interp, stats)
 
-        import pysdss.analytics.colorgrade.research.colorgrade_comparisons as comp
-
         ##############################
 
         #id = "a7aa8d3e709ce42a4ba17ebee02daf66f"
@@ -4037,24 +4032,24 @@ if __name__ == "__main__":
                     "visible_avg", "visible_std"]
 
         stats = fileIO.load_object(folder + id + "_statistics_" + interp)
-        comp.test_interpret_result(stats, id, folder, colmodel)
+        test_interpret_result(stats, id, folder, colmodel)
 
         print("comparing to points")
         point = folder + id + "_keep.csv"
 
-        comp.test_compare_raster_totruth(point, id, folder, steps=steps, clean=[[-1], [0]], counts=["visible"],
+        test_compare_raster_totruth(point, id, folder, steps=steps, clean=[[-1], [0]], counts=["visible"],
                                          suffix="_" + interp + variogram)
 
         print("calculate rmse")
-        comp.calculate_rmse_row(folder, id, steps=steps)
-        comp.estimate_berries_byrow(folder, id, steps=steps)
-        comp.calculate_rmse(folder, id, steps=steps)
+        calculate_rmse_row(folder, id, steps=steps)
+        estimate_berries_byrow(folder, id, steps=steps)
+        calculate_rmse(folder, id, steps=steps)
         print("make charts")
-        comp.chart_rmse(folder, id)
-        comp.chart_estimated_berries(folder, id, steps=steps, useperc=True)
-        comp.chart_estimates_comparison(folder, id, steps=steps)
-        comp.chart_visible_berries(folder, id, steps=steps)
-        comp.chart_colorgrades(folder, id, grades, steps, useperc=True)
+        chart_rmse(folder, id)
+        chart_estimated_berries(folder, id, steps=steps, useperc=True)
+        chart_estimates_comparison(folder, id, steps=steps)
+        chart_visible_berries(folder, id, steps=steps)
+        chart_colorgrades(folder, id, grades, steps, useperc=True)
 
     #kriger_tests()
 
@@ -4100,30 +4095,29 @@ if __name__ == "__main__":
 
         fileIO.save_object(folder + id + "_statistics_"+ interp, stats)
 
-        import pysdss.analytics.colorgrade.research.colorgrade_comparisons as comp
+
 
         colmodel = ["avg", "std", "area", "nozero_area", "zero_area", "visible_count",
                     "visible_avg", "visible_std"]
 
         stats = fileIO.load_object(folder + id + "_statistics_" + interp)
 
-        comp.test_interpret_result(stats, id, folder, colmodel)
+        test_interpret_result(stats, id, folder, colmodel)
 
         point = folder + id + "_keep.csv"
-        comp.test_compare_raster_totruth_byrow(point, id, folder, steps=steps, clean=[[-1], [0]], counts=counts,
+        test_compare_raster_totruth_byrow(point, id, folder, steps=steps, clean=[[-1], [0]], counts=counts,
                                                suffix="_" + interp + variogram)
 
         print("calculate rmse")
-        comp.calculate_rmse_row(folder, id, steps=steps)
-        comp.estimate_berries_byrow(folder, id, steps=steps)
-        comp.calculate_rmse(folder, id, steps=steps)
+        calculate_rmse_row(folder, id, steps=steps)
+        estimate_berries_byrow(folder, id, steps=steps)
+        calculate_rmse(folder, id, steps=steps)
         print("make charts")
-        comp.chart_rmse(folder, id)
-        comp.chart_estimated_berries(folder, id, steps=steps, useperc=True)
-
-        comp.chart_estimates_comparison(folder, id, steps=steps)
-        comp.chart_visible_berries(folder, id, steps=steps)
-        comp.chart_colorgrades(folder, id, grades, steps, useperc=True)
+        chart_rmse(folder, id)
+        chart_estimated_berries(folder, id, steps=steps, useperc=True)
+        chart_estimates_comparison(folder, id, steps=steps)
+        chart_visible_berries(folder, id, steps=steps)
+        chart_colorgrades(folder, id, grades, steps, useperc=True)
 
 
     #kriger_byrow_tests()
@@ -4175,4 +4169,111 @@ if __name__ == "__main__":
         compare_chart_rmse(folder, id, folder1, id1, outpath, useperc=False)
 
 
-    comparisons_tests()
+    #comparisons_tests()
+
+
+
+    ######### OUTPUT 32 combinations  (8*4)
+
+    def analysis_32combinations():
+
+        ################### AVERAGE     ---- INVDIST #####################
+
+        interp = ["average", "invdist"]
+        grades = ['a', 'b', 'c', 'd']
+        steps = [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
+        # random_filter,force_interpolation_by_row, first_last
+        combinations = [
+            #[False, False, False],
+            #[False, False, True],
+            #[False, True, False],
+            #[False, True, True],
+            [True, False, False],
+            [True, False, True],
+            [True, True, False],
+            [True, True, True]
+        ]
+
+        for i in interp:
+            for c in combinations:
+
+                # original worflow with ordered filter and overlapping interpolation
+                id, stats = berrycolor_workflow_1(steps=steps, interp=i, random_filter=c[0],
+                                                  force_interpolation_by_row=c[1], first_last=c[2])
+                folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+                fileIO.save_object(folder + id + "_statistics", stats)
+                test_interpret_result(stats, id, folder)
+                point = folder + id + "_keep.csv"
+
+                if c[1]:
+                    test_compare_raster_totruth_byrow(point, id, folder, steps=steps, clean=[[-1], [0]])
+                else:
+                    test_compare_raster_totruth(point, id, folder, steps=steps, clean=[[-1], [0]])
+
+                print("calculate rmse")
+                calculate_rmse_row(folder, id, steps=steps)
+                estimate_berries_byrow(folder, id, steps=steps)
+                calculate_rmse(folder, id, steps=steps)
+                print("make charts")
+                chart_rmse(folder, id)
+                chart_estimated_berries(folder, id, steps=steps, useperc=True)
+                chart_estimates_comparison(folder, id, steps=steps, useperc=True)
+                chart_visible_berries(folder, id, steps=steps, useperc=True)
+                chart_colorgrades(folder, id, grades, steps, useperc=True)
+
+        ############   kriging ------------- ########################
+
+        interp = ["ordinary", "simple"]
+        grades = ['a', 'b', 'c', 'd']
+        steps = [5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
+        counts = ["visible"]
+        variogram = "global"
+        # random_filter,force_interpolation_by_row, first_last
+        combinations = [
+            [False, False, False],
+            [False, False, True],
+            [False, True, False],
+            [False, True, True],
+            [True, False, False],
+            [True, False, True],
+            [True, True, False],
+            [True, True, True]
+        ]
+
+        for i in interp:
+            for c in combinations:
+
+                id, stats = berrycolor_workflow_kriging(steps=steps, interp=i, random_filter=c[0],
+                            force_interpolation_by_row=c[1], first_last=c[2], variogram = variogram,
+                            rowdirection = "x", epsg = "32611")
+
+                folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+                fileIO.save_object(folder + id + "_statistics_" + i, stats)
+
+                colmodel = ["avg", "std", "area", "nozero_area", "zero_area", "visible_count",
+                            "visible_avg", "visible_std"]
+
+                # stats = fileIO.load_object(folder + id + "_statistics_" + interp)
+                test_interpret_result(stats, id, folder, colmodel)
+
+                point = folder + id + "_keep.csv"
+                if c[1]:
+                    test_compare_raster_totruth_byrow(point, id, folder, steps=steps, clean=[[-1], [0]], counts=counts,
+                                                      suffix="_" + i + variogram)
+                else:
+                    test_compare_raster_totruth(point, id, folder, steps=steps, clean=[[-1], [0]], counts=counts,
+                                                suffix="_" + i + variogram)
+
+                print("calculate rmse")
+                calculate_rmse_row(folder, id, steps=steps)
+                estimate_berries_byrow(folder, id, steps=steps)
+                calculate_rmse(folder, id, steps=steps)
+                print("make charts")
+                chart_rmse(folder, id)
+                chart_estimated_berries(folder, id, steps=steps, useperc=True)
+                chart_estimates_comparison(folder, id, steps=steps, useperc=True)
+                chart_visible_berries(folder, id, steps=steps, useperc=True)
+                chart_colorgrades(folder, id, grades, steps, useperc=True)
+
+
+    analysis_32combinations()
