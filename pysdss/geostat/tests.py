@@ -219,7 +219,7 @@ if __name__ == "__main__":
 
 
 
-        return
+        #return
 
         #chart empirical semivariance and covariance
         output_file(os.path.dirname(os.path.realpath(__file__)) + "/test_data/necoldem.dat.html")
@@ -232,10 +232,10 @@ if __name__ == "__main__":
         save(f)
 
         #fit models to find best ranges
-        svs = fit.fitsemivariogram(data, gamma, fit.spherical)
-        svl = fit.fitsemivariogram(data, gamma, fit.linear)
-        svg = fit.fitsemivariogram(data, gamma, fit.gaussian)
-        sve = fit.fitsemivariogram(data, gamma, fit.exponential)
+        svs = fit.fitsemivariogram(data, gamma, fit.spherical,forcenugget=True)
+        svl = fit.fitsemivariogram(data, gamma, fit.linear,forcenugget=True)
+        svg = fit.fitsemivariogram(data, gamma, fit.gaussian,forcenugget=True)
+        sve = fit.fitsemivariogram(data, gamma, fit.exponential,forcenugget=True)
 
         #chart the fitted models
         output_file(os.path.dirname(os.path.realpath(__file__)) + "/test_data/necoldem.dat.fitted.html")

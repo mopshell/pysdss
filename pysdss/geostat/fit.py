@@ -48,7 +48,9 @@ def exponential(h, c0, c, a):
     :param a: range
     :return:  theoretical semivariogram at distance h
     """
-    return c0 + c*(1-np.exp(-h/a))
+    #return c0 + c*(1-np.exp(-h/a))
+    s = h / a
+    return c0 + c*(1-np.exp(-s))
 
 
 @np.vectorize
@@ -81,22 +83,29 @@ def power(h, c0, c, a, p):
     return c0 + c * (h**p)
 
 
-def fitsemivariogram(data, semivar, model, numranges=200):
+def fitsemivariogram(data, semivar, model, numranges=200,forcenugget=False):
     """Fits a theoretical semivariance model.
     :param data: data, NumPy 2D array, each row has (X, Y, Value)
     :param semivar: empirical semivariances as a 2-D array of [[h,h,h,...]
                                                                 [gamma(h),gamma(h),gamma(h),...]]
     :param model: one of the semivariance models: spherical, Gaussian, exponential, and linear
     :param numranges: number of ranges to test
+    :param forcenugget: True if we want to srat the fitted line with the nugget
     :return: a lambda function that serves as a fitted model of semivariogram.
             This function will require one parameter(distance).
     """
 
     c = np.var(data[:, 2])          # sill
-    if semivar[0][0] is not 0.0:      # cnugget
-        c0 = 0.0
+
+    if forcenugget:
+        if semivar[0][0] is not 0.0:      # cnugget
+            semivar[0][0] = 0.0
+        c0 = semivar[1][0]
     else:
-        c0 = semivar[0][1]
+        if semivar[0][0] is not 0.0:      # cnugget
+            c0 = 0.0
+        else:
+            c0 = semivar[0][1]
     minrange, maxrange = semivar[0][1], semivar[0][-1]
     ranges = np.linspace(minrange, maxrange, numranges)
     #calculate the error for all the ranges and get the range with lower error
@@ -104,5 +113,3 @@ def fitsemivariogram(data, semivar, model, numranges=200):
     a = ranges[errs.index(min(errs))]  # optimal range
 
     return lambda h: model(h, c0, c, a)
-
-

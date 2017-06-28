@@ -9,7 +9,7 @@
 # Created:     04/04/2017
 #-------------------------------------------------------------------------------
 
-
+#import time
 
 import pandas as pd
 import math
@@ -47,7 +47,7 @@ from bokeh.io import output_file, save
 #from bokeh.models import Label
 from bokeh.models import NumeralTickFormatter, Label
 from bokeh.palettes import d3
-
+from bokeh.io import export_png  #new in veersion 0.12.6
 
 #from rasterstats import point_query
 
@@ -118,6 +118,29 @@ def outinfo(outpath,
         "variogram":variogram
     }
     utils.json_io(outpath, info)
+
+def outputinfotext(paths, outdir):
+    """
+    Ouyput csv with infos about the interpolation folders
+    :param paths:
+    :param outdir:
+    :return:
+    """
+
+    out = open(outdir + "/fullinfos.csv", "w")
+
+    out.write("id, name, filter_type, interpolation, first_last,variogram,steps,counts,colorgrades\n")
+
+    for p in paths:
+
+        info = utils.json_io(p + "/info.json", direction="in")
+        b = os.path.basename(p)
+        id = b if b.strip() != '' else p.split('/')[-2]
+        out.write(
+        id+"," + info["name"]+ "," + info["filter_type"]+"," + info["interpolation"]+"," + \
+        str(info["first_last"]) + "," + info["variogram"]+",\"" + repr(info["steps"])+"\",\"" + \
+        repr(info["counts"])+ "\",\"" + repr(info["colorgrades"]) +"\"\n")
+
 
 ########## download generic 2 joined data table
 def dowload_all_data_test(id, path):
@@ -1726,7 +1749,7 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
 
 
 
-def get_variogram(vardata, hh, maxlagdistance, outfile):
+def get_variogram(vardata, hh, maxlagdistance, outfile, forcenugget=True):
     """
     Calculate semivariance and fit the semivariogram
     :param vardata: x,y,value
@@ -1746,7 +1769,8 @@ def get_variogram(vardata, hh, maxlagdistance, outfile):
     # set lags from 0 to the interpolation radius
     # lags = range(0, int(radius), hh)
 
-    lags = np.arange(0, int(maxlagdistance * 2), hh)
+    #lags = np.arange(0, int(maxlagdistance * 2), hh)
+    lags = np.arange(0, int(maxlagdistance*1.25), hh)
     gamma = vrc.semivar2(vardata, lags, hh)
     # covariance = vrc.covar(data, lags, hh)
 
@@ -1763,10 +1787,10 @@ def get_variogram(vardata, hh, maxlagdistance, outfile):
     print("fit semivariogram")
     # choose the model with lowest rmse (we use sphrical and exponential)
     semivariograms = []
-    semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.spherical))
-    ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.linear))
-    ###semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.gaussian))
-    semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.exponential))
+    semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.spherical, forcenugget=forcenugget))
+    #semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.linear, forcenugget=forcenugget))
+    #semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.gaussian, forcenugget=forcenugget))
+    semivariograms.append(fit.fitsemivariogram(vardata, gamma, fit.exponential,forcenugget=forcenugget))
     rsmes = [rmse(gamma[0], i(gamma[0])) for i in semivariograms]
     semivariogram = semivariograms[rsmes.index(min(rsmes))]
 
@@ -1837,7 +1861,7 @@ def savegrids(grid, gridpath, grid_error, grid_errorpath, xsize, ysize, geotr, n
 
 
 def fillin_grids_counts(krigdata, varmean, semivariogram, grid, grid_error, index0,
-                        index1, interp, vardatamax):
+                        index1, interp, vardatamax, vardatamin):
     """
     :param krigdata:
     :param varmean_row:
@@ -1857,9 +1881,14 @@ def fillin_grids_counts(krigdata, varmean, semivariogram, grid, grid_error, inde
         except Exception as e:
             print(e, end='')  # TODO did this because of the singular matrix error
         else:
-            if simple[0] <= vardatamax * 2:  # TODO temporary patch to avoid outside range result
+            # TODO temporary patch to avoid outside range result
+            if simple[0] < 0:
+                grid[index0, index1] = vardatamin
+                grid_error[index0, index1] = simple[1]
+            elif simple[0] <= vardatamax * 2:
                 grid[index0, index1] = simple[0]
                 grid_error[index0, index1] = simple[1]
+
 
     else:  # ordinary
         try:
@@ -1868,7 +1897,10 @@ def fillin_grids_counts(krigdata, varmean, semivariogram, grid, grid_error, inde
             print(e, end='')  # TODO did this because of the singular matrix error
         else:
             # TODO this is a temporary patch to avoid outside range result!
-            if ordinary[0] <= vardatamax * 2:
+            if ordinary[0] < 0:
+                grid[index0, index1] = vardatamin #this will avoid vineyar rows with no values for high filtering
+                grid_error[index0, index1] = ordinary[1]
+            elif ordinary[0] <= vardatamax * 2:
                 grid[index0, index1] = ordinary[0]
                 grid_error[index0, index1] = ordinary[1]
 
@@ -1898,9 +1930,14 @@ def fillin_grids_colors(krigdata, varmean, semivariogram, grid, grid_error, inde
             if simple[0] > 1:
                 grid[index0, index1] = 1.0
                 grid_error[index0, index1] = simple[1]
-            if 0 <= simple[0] <= 1:
+            elif simple[0] < 0:
+                grid[index0, index1] = 0.0
+                grid_error[index0, index1] = simple[1]
+            else:
+            #if 0 <= simple[0] <= 1:
                 grid[index0, index1] = simple[0]
                 grid_error[index0, index1] = simple[1]
+
     else:  # ordinary
         try:
             ordinary = krig.ordinary(krigdata, semivariogram)
@@ -1910,8 +1947,12 @@ def fillin_grids_colors(krigdata, varmean, semivariogram, grid, grid_error, inde
             if ordinary[0] > 1:
                 grid[index0, index1] = 1.0
                 grid_error[index0, index1] = ordinary[1]
+            elif ordinary[0] < 0:
+                grid[index0, index1] = 0.0
+                grid_error[index0, index1] = ordinary[1]
             # TODO this is a temporary patch to avoid outside range result!
-            if 0 <= ordinary[0] <= 1:
+            #if 0 <= ordinary[0] <= 1:
+            else:
                 grid[index0, index1] = ordinary[0]
                 grid_error[index0, index1] = ordinary[1]
 
@@ -1947,12 +1988,12 @@ def dokriging(vardata, grid, grid_error, semivariogram, index, geotr, datasorce,
         varmean = np.mean(nearvardata[:, 2])
         # this is the highest value in the nearby row data, this is used th threshod the output
         vardatamax = nearvardata[:, 2].max()
+        vardatamin = nearvardata[:, 2].min()
 
         # if there is only 1 neighbour we take its value else we do kriging
         if len(nearindexes) == 1:
             # if len(idx) == 1:
-            grid[index[0][i], index[1][i]] = nearvardata[
-                0, 2]  # i did this otherwise kriging with 1 point will raise error
+            grid[index[0][i], index[1][i]] = nearvardata[0, 2]  # i did this otherwise kriging with 1 point will raise error
             grid_error[index[0][i], index[1][i]] = 0  # todo how to deal with the error?
         else:
             distance, idx = tree.query((lonlat[0], lonlat[1]), len(nearindexes))
@@ -1985,9 +2026,8 @@ def dokriging(vardata, grid, grid_error, semivariogram, index, geotr, datasorce,
             #    pass
 
         if datasorce == 'counts':
-
             fillin_grids_counts(krigdata, varmean, semivariogram, grid, grid_error, index[0][i],
-                                index[1][i], interp, vardatamax)
+                                index[1][i], interp, vardatamax, vardatamin)
         else:
             fillin_grids_colors(krigdata, varmean, semivariogram, grid, grid_error, index[0][i],
                                 index[1][i], interp)
@@ -2055,6 +2095,7 @@ def dokriging_byrow(dataset, row, step, field, grid, grid_error, semivariogram, 
         varmean_row = np.mean(nearvardata[:, 2]) #########todo is this correct? ineed the mean of this subdata for simple kriging???
         # this is the ighest value in the nearby row data, this is used th threshod the output
         vardatamax = nearvardata[:, 2].max()
+        vardatamin = nearvardata[:, 2].min()
 
         # if there is only 1 neighbour we take its value else we do kriging
         if len(nearindexes) == 1:
@@ -2074,7 +2115,7 @@ def dokriging_byrow(dataset, row, step, field, grid, grid_error, semivariogram, 
             if datasorce == 'counts':
 
                 fillin_grids_counts(krigdata, varmean_row, semivariogram, grid, grid_error, index0_masked[i],
-                                    index1_masked[i], interp,vardatamax)
+                                    index1_masked[i], interp,vardatamax,vardatamin)
             else:
                 fillin_grids_colors(krigdata, varmean_row, semivariogram, grid, grid_error, index0_masked[i],
                                     index1_masked[i], interp)
@@ -2109,7 +2150,7 @@ def dokriging_byrow(dataset, row, step, field, grid, grid_error, semivariogram, 
 
 def berrycolor_workflow_kriging(steps=[30], colorgrades = ['a','b','c','d'], counts = ['raw','visible'], interp="simple",
                                 random_filter=False, first_last=False, force_interpolation_by_row=False, nodata=-1.0,
-                                variogram = "global",rowdirection="x", epsg="32611", rounddecimals=4,
+                                variogram = "global",rowdirection="x", epsg="32611", rounddecimals=4, forcenugget=True,
                                 id = "adca0a053062b45da8a20e0a0d4b4fe54", skip=True):
 
     """
@@ -2136,6 +2177,7 @@ def berrycolor_workflow_kriging(steps=[30], colorgrades = ['a','b','c','d'], cou
     :param epsg: coordinate system code
     :param rounddecimals: number of decimals in the resulting iterpolation grids
      this is used to round the decimals in the result grids, this should limit overflows when calculating the statistics
+    :param forcenugget True to force the distance zero for the interpolated semivariogram to have the nugget value
     :param id: used for debugging purposes
     :param skip: used for debugging purposes
     :return:
@@ -2477,7 +2519,7 @@ def berrycolor_workflow_kriging(steps=[30], colorgrades = ['a','b','c','d'], cou
                 hh = 1 / area_multiplier
                 maxlagdistance = max_point_distance_all + 0.5 if random_filter else 0.5 * step
                 outfile = folder + id + "_globalsemivariogram_" + "visible" + "_step" + str(step)
-                semivariogram = get_variogram(vardata, hh, maxlagdistance, outfile)
+                semivariogram = get_variogram(vardata, hh, maxlagdistance, outfile, forcenugget=forcenugget)
 
 
             for clr in counts:
@@ -2585,7 +2627,7 @@ def berrycolor_workflow_kriging(steps=[30], colorgrades = ['a','b','c','d'], cou
                     hh = 1 / area_multiplier
                     maxlagdistance = max_point_distance_all + 0.5 if random_filter else 0.5 * step
                     outfile = folder + id + "_globalsemivariogram_" + clr.lower() + "_step" + str(step)
-                    semivariogram = get_variogram(vardata, hh, maxlagdistance, outfile)
+                    semivariogram = get_variogram(vardata, hh, maxlagdistance, outfile, forcenugget=forcenugget)
 
 
                 #for each row if random calculate the max distance for the current row
@@ -2672,6 +2714,8 @@ def berrycolor_workflow_kriging(steps=[30], colorgrades = ['a','b','c','d'], cou
             # add dictionary for this step
             stats[step] = {}
 
+            #start = time.time()
+
             # filter data by step
             k, d = filter.filter_bystep(keep, step=step, rand=random_filter, first_last=first_last,rowname="row")
             # if random_filter we will set the radius to the max distance between points in a row
@@ -2716,16 +2760,26 @@ def berrycolor_workflow_kriging(steps=[30], colorgrades = ['a','b','c','d'], cou
             vardata = k[["lon", "lat", "visible_fruit_per_m"]].values
             varmean = np.mean(vardata[:, 2]) #todo is this useful?
 
+            #now= time.time()
+            #print( "start variogram " + str(now - start *1000))
+
             if variogram == "global":
                 hh = 1 / area_multiplier
                 outfile = folder + id + "_globalsemivariogram_" + "visible" + "_step" + str(step)
-                semivariogram = get_variogram(vardata, hh, radius, outfile)
+                semivariogram = get_variogram(vardata, hh, radius, outfile, forcenugget=forcenugget)
+
+            #now1= time.time()
+            #print( "finish variogram " + str(now1 - now *1000))
 
             # initialize grid as numpy array, filled in with nodata value (-1)
             grid = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
             grid_error = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
 
             grid, grid_error = dokriging(vardata, grid, grid_error, semivariogram, index, geotr, "counts", interp, tree,radius)
+
+
+            #now= time.time()
+            #print(" kriging over " + str(now - now1 *1000))
 
             # delete values less than zero and round the values
             grid[grid < 0] = nodata
@@ -2770,16 +2824,25 @@ def berrycolor_workflow_kriging(steps=[30], colorgrades = ['a','b','c','d'], cou
                 vardata = k[["lon", "lat", clr.lower()]].values
                 varmean = np.mean(vardata[:, 2]) #todo is this useful?
 
+                #now1 = time.time()
+                #print(now1 - now * 1000)
+
                 if variogram == "global":
                     hh = 1 / area_multiplier
                     outfile = folder + id + "_globalsemivariogram_" + clr.lower() + "_step" + str(step)
-                    semivariogram = get_variogram(vardata, hh, radius, outfile)
+                    semivariogram = get_variogram(vardata, hh, radius, outfile, forcenugget=forcenugget)
+
+                #now = time.time()
+                #print(now - now1 * 1000)
 
                 # initialize grid as numpy array, filled in with nodata value (-1)
                 grid = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
                 grid_error = np.ones((delty * area_multiplier, deltx * area_multiplier)) * (nodata)
 
                 grid, grid_error = dokriging(vardata, grid, grid_error, semivariogram, index, geotr, "colors", interp,tree, radius)
+
+                #now1 = time.time()
+                #print(now1 - now * 1000)
 
                 # round the values to avoid overflows when calculating statistics
                 np.round(grid, rounddecimals, out=grid)
@@ -3406,21 +3469,30 @@ def chart_rmse(folder,id, useperc=True):
     save(f)
 
 
-def compare_chart_rmse(folder,id,folder1,id1, outpath, useperc=True):
+def compare_chart_rmse(folder,id,folder1,id1, outpath, suffix="", outstats=None,exportimage=True, useperc=True):
     """
-    Compare the rmse for 2 datasets (  calculate_rmse() should be used beforehand to get the rmse)
-    :param folder:
-    :param id:
-    :param folder1:
-    :param id1:
-    :param outpath:
-    :param useperc:
+    Compare the rmse for 2 datasets (calculate_rmse() should be used beforehand to get the rmse)
+    :param folder: first file folder
+    :param id: first file id
+    :param folder1: second file folder
+    :param id1: second file id
+    :param outpath: where to output the charts
+    :param:suffix additional text to add to the file name
+    :param outstats a file object for review infos
+    :param useperc: use "n%" in the chart otherwise use "stepXX"
     :return:
     """
 
+    from bokeh.io import export_png
+
+
+    if exportimage:
+        outchart = outpath+"/charts"
+        if not os.path.exists(outchart): os.mkdir(outchart)
+
     ################# first dataset
     #open pandas dataframe
-    path = folder + id + "_rsme.csv"
+    path = folder + "/" + id + "_rsme.csv"
     df = pd.read_csv(path)
 
     ncols = df.shape[1]
@@ -3436,7 +3508,7 @@ def compare_chart_rmse(folder,id,folder1,id1, outpath, useperc=True):
 
     ################### second dataset
     # open pandas dataframe
-    path = folder1 + id1 + "_rsme.csv"
+    path = folder1 + "/" + id1 + "_rsme.csv"
     df1 = pd.read_csv(path)
 
     ncols1 = df1.shape[1]
@@ -3450,8 +3522,6 @@ def compare_chart_rmse(folder,id,folder1,id1, outpath, useperc=True):
     if useperc:
         x_labels1 = [int((1/i)*100) for i in x_labels1]
     #########################
-
-
 
     ######prepare the labels
     if useperc:
@@ -3476,40 +3546,71 @@ def compare_chart_rmse(folder,id,folder1,id1, outpath, useperc=True):
 
     ############################
     #chart ["stepx_delta_avg_rmse"]
-    output_file(outpath+"/delta_avg_rmse_comparison.html",title="delta_avg_rmse_comarison")
+
+    dupl1 = ""
+    dupl2 = ""
+    legend1 = info["name"]
+    legend2 = info1["name"]
+    if info["name"] == info1["name"]:
+        legend1 += "1"
+        legend2 += "2"
+        dupl1 = "1"
+        dupl2 = "2"
+
+    #these are info to add to output chart name
+    addendum = ("T" if info["filter_type"]=="random" else "F") + ("T" if info["interpolation"] =="onlyrows" else "F") + ("T" if info["first_last"]==True else "F")
+    addendum1 = ("T" if info1["filter_type"]=="random" else "F") + ("T" if info1["interpolation"] =="onlyrows" else "F") + ("T" if info1["first_last"]==True else "F")
+
+    fname= "/delta_avg_rmse_comparison"+suffix+ "_" + info["name"].split()[0] + addendum + "_" + info1["name"].split()[0] + addendum1
+    output_file(outpath+fname+".html",title="delta_avg_rmse_comarison")
     f = figure(x_range=xlabels, title="Delta RMSE for average number of berries per vineyard row")
-    f.line(x_labels , df.values[0,0:int(ncols/2)], line_width=2, color="blue",legend=info["name"])
-    f.line(x_labels1 , df1.values[0,0:int(ncols1/2)], line_width=2,color="green",legend=info1["name"])
+    f.line(x_labels , df.values[0,0:int(ncols/2)], line_width=2, color="blue",legend=legend1)
+    f.line(x_labels1 , df1.values[0,0:int(ncols1/2)], line_width=2,color="green",legend=legend2)
 
     # making multiline labels /n and <br/> do not work
-    first_label = Label(x=40, y= (-30), x_units='screen', y_units='screen',
-                       text=info["name"].upper() + " -- Filter:" + info["filter_type"] +" -- Interpolation:" + info["interpolation"],
-                        render_mode='css',background_fill_color='white', background_fill_alpha=1.0)
+    first_label = Label(x=50, y=f.plot_height-50, x_units='screen', y_units='screen',
+                       text=info["name"].upper() + dupl1+ " -> Filter:" + info["filter_type"] +" - Interpolation:" + info["interpolation"]+" - First/Last:" + str(info["first_last"]),
+                        render_mode='canvas',background_fill_color='white', background_fill_alpha=1.0,text_font_size="7.5pt")
 
-    second_label = Label(x=40, y= (-50), x_units='screen', y_units='screen',
-                         text=info1["name"].upper() + " -- Filter:" + info1["filter_type"] + " -- Interpolation:" + info1["interpolation"],
-                        render_mode='css',background_fill_color='white', background_fill_alpha=1.0)
+    second_label = Label(x=50, y=f.plot_height-70, x_units='screen', y_units='screen',
+                         text=info1["name"].upper() + dupl2 + " -> Filter:" + info1["filter_type"] + " - Interpolation:" + info1["interpolation"]+" - First/Last:" + str(info1["first_last"]),
+                        render_mode='canvas',background_fill_color='white', background_fill_alpha=1.0, text_font_size="7.5pt")
 
     f.add_layout(first_label)
     f.add_layout(second_label)
+    f.legend.label_text_font_size = "7pt"
+    f.legend.location = "bottom_right"
     save(f)
+
+    if exportimage: export_png(f, filename=outchart + fname+".png")
+
 
     #chart ("stepx_delta_estimates_rmse")
-    output_file(outpath+"/delta_estimates_rmse_comparison.html",title="delta_estimates_rmse_comparison")
+    fname = "/delta_estimates_rmse_comparison"+suffix+ "_" + info["name"].split()[0] + addendum + "_" + info1["name"].split()[0] + addendum1
+    output_file(outpath+fname+".html",title="delta_estimates_rmse_comparison")
     f = figure(x_range=xlabels, title="Delta RMSE for total number of berries per vineyard row")
-    f.line(x_labels, df.values[0,int(ncols/2):], line_width=2, color="blue",legend=info["name"])
-    f.line(x_labels1, df1.values[0,int(ncols1/2):], line_width=2,color="green", legend=info1["name"])
+    f.line(x_labels, df.values[0,int(ncols/2):], line_width=2, color="blue",legend=legend1)
+    f.line(x_labels1, df1.values[0,int(ncols1/2):], line_width=2,color="green", legend=legend2)
 
-    first_label = Label(x=40, y= (-30), x_units='screen', y_units='screen',
-                       text=info["name"].upper() + " -- Filter:" + info["filter_type"] +" -- Interpolation:" + info["interpolation"],
-                        render_mode='css',background_fill_color='white', background_fill_alpha=1.0)
+    first_label = Label(x=60, y= f.plot_height-50, x_units='screen', y_units='screen',
+                       text=info["name"].upper() + dupl1 + " -> Filter:" + info["filter_type"] +" - Interpolation:" + info["interpolation"]+" - First/Last:" + str(info["first_last"]),
+                        render_mode='canvas',background_fill_color='white', background_fill_alpha=1.0,text_font_size="7.5pt")
 
-    second_label = Label(x=40, y= (-50), x_units='screen', y_units='screen',
-                         text=info1["name"].upper() + " -- Filter:" + info1["filter_type"] + " -- Interpolation:" + info1["interpolation"],
-                        render_mode='css',background_fill_color='white', background_fill_alpha=1.0)
+    second_label = Label(x=60, y= f.plot_height-70, x_units='screen', y_units='screen',
+                         text=info1["name"].upper() + dupl2 + " -> Filter:" + info1["filter_type"] + " - Interpolation:" + info1["interpolation"]+" - First/Last:" + str(info1["first_last"]),
+                        render_mode='canvas',background_fill_color='white', background_fill_alpha=1.0,text_font_size="7.5pt")
     f.add_layout(first_label)
     f.add_layout(second_label)
+    f.legend.label_text_font_size = "7pt"
+    f.legend.location = "bottom_right"
     save(f)
+
+    if exportimage: export_png(f, filename=outchart + fname + ".png")
+
+
+    #write info to the output file
+    if outstats:
+        outstats.write(suffix+ "," + id + "," + info["name"].split()[0] + "," +addendum + "," +  id1 + "," + info1["name"].split()[0] + "," + addendum1+"\n")
 
 
 def chart_estimated_berries(folder,id, steps=[], useperc=True):
@@ -4153,24 +4254,46 @@ if __name__ == "__main__":
     #outinfos_tests()
 
 
-    def comparisons_tests():
-
-        """tests
+    def compare_rmse_couples(paths, outpath):
+        """
+        Compare RMSE for each couple and output a camparison chart
+        :param paths: a list of paths to the folders
+        :param outpath:
+        :return:
         """
 
-        id = "a40b9fc7181184bf0b9835f830a677513"
-        folder = "/vagrant/code/pysdss/data/output/text/analysis0806_steps2to100/" + id + "/"
+        #id = "a40b9fc7181184bf0b9835f830a677513"
+        #folder = "/vagrant/code/pysdss/data/output/text/analysis0806_steps2to100/" + id + "/"
+        #id1 = "a7aa8d3e709ce42a4ba17ebee02daf66f"
+        #folder1 = "/vagrant/code/pysdss/data/output/text/analysys1906_krigingsteps5to100/" + id1 + "/"
+        #outpath = "/vagrant/code/pysdss/data/output/text/"
 
-        id1 = "a7aa8d3e709ce42a4ba17ebee02daf66f"
-        folder1 = "/vagrant/code/pysdss/data/output/text/analysys1906_krigingsteps5to100/" + id1 + "/"
+        import itertools
+        import os.path
 
-        outpath = "/vagrant/code/pysdss/data/output/text/"
+        #open a file to write infos about the comparison charts
+        outstats = open(outpath+"/overview.csv","w")
+        outstats.write("id,id1,file1,file1_info,id2,file2,file2_info\n")
 
-        compare_chart_rmse(folder, id, folder1, id1, outpath, useperc=False)
+        #make all the couple combinatoins for file names
+        combinations = itertools.combinations(paths, 2)
+        for i,path in enumerate(combinations):
+            b = os.path.basename(path[0])
+            id = b if b.strip() != '' else path[0].split('/')[-2]
+            b = os.path.basename(path[0])
+            id1 = b if b.strip() != '' else path[1].split('/')[-2]
+            compare_chart_rmse(path[0], id, path[1], id1, outpath, suffix= str(i), outstats=outstats, useperc=True)
+        outstats.close()
 
-
-    #comparisons_tests()
-
+    '''
+    maindir = "/vagrant/code/pysdss/data/output/text/analysys2206"
+    #dirs = os.listdir("/vagrant/code/pysdss/data/output/text/analysys2206")
+    dirs = [d for d in os.listdir(maindir) if os.path.isdir(os.path.join(maindir, d))]
+    paths = [ maindir + "/" + dir + "/" for dir in dirs]
+    if not os.path.exists(maindir+"/comparisons"): os.mkdir(maindir+"/comparisons")
+    outputinfotext(paths, maindir+"/comparisons") #write all the directory infos to a single file
+    compare_rmse_couples(paths, maindir+"/comparisons")
+    '''
 
 
     ######### OUTPUT 32 combinations  (8*4)
@@ -4179,7 +4302,8 @@ if __name__ == "__main__":
 
         ################### AVERAGE     ---- INVDIST #####################
 
-        interp = ["average", "invdist"]
+        interp =[]# ["average", "invdist"]
+        interp = ["invdist"]
         grades = ['a', 'b', 'c', 'd']
         steps = [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
         # random_filter,force_interpolation_by_row, first_last
@@ -4188,10 +4312,10 @@ if __name__ == "__main__":
             #[False, False, True],
             #[False, True, False],
             #[False, True, True],
-            [True, False, False],
-            [True, False, True],
-            [True, True, False],
-            [True, True, True]
+            #[True, False, False], ##########error? step100
+            #[True, False, True],
+            #[True, True, False],#####error? step100
+            #[True, True, True]
         ]
 
         for i in interp:
@@ -4223,29 +4347,34 @@ if __name__ == "__main__":
 
         ############   kriging ------------- ########################
 
-        interp = ["ordinary", "simple"]
+        #interp = ["ordinary", "simple"]
+        interp = ["ordinary"]
+        #interp = ["simple"]
         grades = ['a', 'b', 'c', 'd']
-        steps = [5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
+        #steps = [5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
+        steps = [50]
         counts = ["visible"]
         variogram = "global"
         # random_filter,force_interpolation_by_row, first_last
         combinations = [
-            [False, False, False],
-            [False, False, True],
-            [False, True, False],
-            [False, True, True],
-            [True, False, False],
-            [True, False, True],
-            [True, True, False],
-            [True, True, True]
+            #[False, False, False],
+            #[False, False, True],
+            #[False, True, False],
+            #[False, True, True],
+            [True, False, False],  #taking too much time?
+            #[True, False, True], #taking too much time?
+            #[True, True, False],
+            #[True, True, True]
         ]
 
         for i in interp:
             for c in combinations:
 
-                id, stats = berrycolor_workflow_kriging(steps=steps, interp=i, random_filter=c[0],
+                id, stats = berrycolor_workflow_kriging(steps=steps, counts=counts, interp=i, random_filter=c[0],
                             force_interpolation_by_row=c[1], first_last=c[2], variogram = variogram,
                             rowdirection = "x", epsg = "32611")
+
+                #id ="a76b7da4d98084ac5863db7adc77eb957"
 
                 folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
                 fileIO.save_object(folder + id + "_statistics_" + i, stats)
@@ -4253,7 +4382,7 @@ if __name__ == "__main__":
                 colmodel = ["avg", "std", "area", "nozero_area", "zero_area", "visible_count",
                             "visible_avg", "visible_std"]
 
-                # stats = fileIO.load_object(folder + id + "_statistics_" + interp)
+                #stats = fileIO.load_object(folder + id + "_statistics_" + i)
                 test_interpret_result(stats, id, folder, colmodel)
 
                 point = folder + id + "_keep.csv"
@@ -4276,4 +4405,128 @@ if __name__ == "__main__":
                 chart_colorgrades(folder, id, grades, steps, useperc=True)
 
 
-    analysis_32combinations()
+    #analysis_32combinations()
+
+
+
+    def export_word_test(outdir, img):
+        """
+        Testing exporting word file with text and table with pictures
+        :return:
+        """
+        import docx
+        from docx import Document
+        from docx.shared import Cm
+
+        document = Document()
+
+
+        document.add_heading('The REAL meaning of the universe')
+        paragraph = document.add_paragraph('Lorem ipsum dolor sit amet.')
+        prior_paragraph = paragraph.insert_paragraph_before('Lorem ipsum')
+
+        document.add_page_break()
+
+        document.add_heading('The role of dolphins', level=2)
+
+        document.add_page_break()
+
+        table = document.add_table(rows=2, cols=2)
+
+        table.style = 'LightShading-Accent1'
+
+        cell = table.cell(0, 0)
+        cell.text = 'parrot, possibly dead'
+
+        row = table.rows[1]
+        row.cells[0].text = 'Foo bar to you.'
+        row.cells[1].text = 'And a hearty foo bar to you too sir!'
+
+
+        for row in table.rows:
+            for cell in row.cells:
+                print(cell.text)
+                paragraph = cell.paragraphs[0]
+                run = paragraph.add_run()
+                run.add_picture(img, width=Cm(7.5))
+
+        row_count = len(table.rows)
+        col_count = len(table.columns)
+
+        print(row_count,col_count)
+
+        row = table.add_row()
+        row_count = len(table.rows)
+        print(row_count,col_count)
+
+        document.add_picture(img, width=Cm(7.5))
+        document.save(outdir+'/test.docx')
+
+    #export_word_test("/vagrant/code/pysdss/data/output/text","/vagrant/code/pysdss/data/output/text/analysys2206/comparisons/charts/delta_avg_rmse_comparison0_simpleTFT_movingTFF.png"  )
+
+
+    def find_pictures(path,outpath,typ="",keys=[]):
+        """
+        Find pictures for avg or estimates rmse and filter by keys
+
+        -pass one key to find all the images with that key
+        -pass2 keys
+            -the same key  "simple","simple"     "TFT","TFT"
+            -different keys  "simpleTFT", "TTT"
+            -one is subkey   "simpleTFT", "TFT"
+
+        :param path: path to folder with images only
+        :param typ: "avg" "estimates"
+        :param keys: list with query keys
+        :return: a list of filtered file names
+        """
+
+        import docx
+        from docx import Document
+        from docx.shared import Cm
+
+
+        import re
+
+        #find all images
+        files = [d for d in os.listdir(path) if not os.path.isdir(os.path.join(path, d))]
+        # filter "averages" or "estimates" charts
+        files = [d for d in files if typ in d]
+        #filter by keys
+        if len(keys) < 1: raise ValueError("pass 2 keys")
+        if len(keys)==1: #only 1 key, just find everything with that key
+            files = [d for d in files if (keys[0] in d)]
+        else:
+            if keys[0] == keys[1]: #same key, be sure the key is available ywice in the file
+                files = [d for d in files if (len([m for m in re.finditer(keys[0], d)]) > 1)]
+            else:
+                if keys[0] in keys[1] and len(keys[0]) == 3: #we have 1 subkey then be sure this is available twice in the file
+                    files = [d for d in files if (keys[1] in d and len([m for m in re.finditer(keys[0], d)]) > 1)]
+                elif keys[1] in keys[0] and len(keys[1]) == 3:#we have 1 subkey then be sure this is available twice in the file
+                    files = [d for d in files if (keys[0] in d and len([m for m in re.finditer(keys[1], d)]) > 1)]
+                else: #2 different keys
+                    files = [d for d in files if (keys[0] in d and keys[1] in d)]  # filter "averages" or "estimates" charts
+
+        document = Document()
+        table = document.add_table(cols=2, rows=math.ceil(len(files)/2)) #calculate the number of cells for a table with 2 rows
+        i=0
+        for row in table.rows:
+            for cell in row.cells:
+                if i<len(files):
+                    paragraph = cell.paragraphs[0]
+                    run = paragraph.add_run()
+                    run.add_picture(path+"/"+files[i], width=Cm(7.5))
+                    i+=1
+
+        if len(keys)==1:
+            document.save(outpath + "/" + typ + "_" + keys[0] + ".docx")
+        else:
+            document.save(outpath+"/" + typ + "_"+ keys[0] + "_" + keys[1] +".docx")
+
+        #print(files)
+        #return files
+
+
+    chartpath = "/vagrant/code/pysdss/data/output/text/analysys2206/comparisons/charts"
+    if not os.path.exists(chartpath + "/docs"): os.mkdir(chartpath + "/docs")
+    find_pictures(chartpath,chartpath + "/docs", "estimates",["simple"])

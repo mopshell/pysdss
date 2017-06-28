@@ -297,7 +297,10 @@ def max_point_distance(file, xfield, yfield, row, direction="x",  rem_duplicates
     for x in rows:
         r = np.where(arr[:, 0] == x)  # get the indexes for this row
         # skip the last point becuse contains distances between point on different rows, coloumn 4 has the average values
-        maxim.append(np.max(arr[r][:-1, 3]))
+        try:
+            maxim.append(np.max(arr[r][:-1, 3]))
+        except:
+            pass ##this is to avoid exception when the last row has 0 points! #todo what is other rows have only 1 point?
     # finally return the highest for all the rows
     return max(maxim)
 
