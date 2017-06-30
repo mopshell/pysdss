@@ -22,6 +22,10 @@ import sys
 import os
 import os.path
 import re
+import io
+
+import selenium.webdriver as webdriver
+import PIL.Image as Image
 
 import numpy as np
 #from scipy.interpolate import Rbf
@@ -3734,10 +3738,6 @@ def grab_image_fromhtml(path, filename):
     :param filename: full path to png output file
     :return: None
     """
-
-    import selenium.webdriver as webdriver
-    import PIL.Image as Image
-    import io
 
     driver = webdriver.PhantomJS()
     driver.get("file:///" + path)
