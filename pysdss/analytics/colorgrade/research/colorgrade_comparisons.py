@@ -11,7 +11,7 @@
 
 #import time
 
-import pandas as pd
+import itertools
 import math
 import random
 import shutil
@@ -21,14 +21,17 @@ import warnings
 import sys
 import os
 import os.path
-from osgeo import gdal
-#from osgeo import gdalconst as gdct
-#from osgeo import ogr
-from osgeo import osr
+import re
 
 import numpy as np
 #from scipy.interpolate import Rbf
 #from scipy.misc import imsave
+import pandas as pd
+
+from osgeo import gdal
+#from osgeo import gdalconst as gdct
+#from osgeo import ogr
+from osgeo import osr
 
 import scipy.spatial.ckdtree as kdtree
 #from scipy.spatial.distance import pdist
@@ -41,7 +44,6 @@ matplotlib.use('Agg')
 
 from sklearn import linear_model
 
-
 from bokeh.plotting import figure
 from bokeh.io import output_file, save
 #from bokeh.models import Label
@@ -50,6 +52,9 @@ from bokeh.palettes import d3
 from bokeh.io import export_png  #new in veersion 0.12.6
 
 #from rasterstats import point_query
+
+from docx import Document
+from docx.shared import Cm
 
 from pysdss.utility import fileIO
 from pysdss.utility import gdalRasterIO as gdalIO
@@ -66,13 +71,11 @@ from  pysdss.utils import rmse
 from pysdss.geostat import kriging as krig
 
 
-#######################################################
-##############old berry workflow 1#####################
-
+###some harddoded variables for database connection and database query
 connstring = {"dbname": "grapes", "user": "claudio", "password": "claudio", "port": "5432", "host": "127.0.0.1"}
 datasetid = 26
 boundid = 1
-
+#######################################################
 
 
 
@@ -121,9 +124,14 @@ def outinfo(outpath,
 
 def outputinfotext(paths, outdir):
     """
-    Ouyput csv with infos about the interpolation folders
-    :param paths:
-    :param outdir:
+    Ouyput 'fullinfos.csv' with infos about the interpolation folders
+    the structure of the file will be like:
+    id	            name	        filter_type	 interpolation	 first_last	variogram	steps	        counts	            colorgrades
+    a00bca573171a4f	simple kriging	random	    free	        TRUE	    global	    [5, 6, 7, 8]	['visible']	        ['a', 'b', 'c', 'd']
+    a01b2eada44b842	moving average	random	    free	        FALSE		            [2, 3, 4, 5]	['visible', 'raw']	['a', 'b', 'c', 'd']
+
+    :param paths: list of folder with interpolation results
+    :param outdir: the output directory for the text file
     :return:
     """
 
@@ -535,6 +543,8 @@ def test_interpolate_and_filter():
 ##########################################################
 ##########################################################
 
+#######################################################
+##############old berry workflow 1#####################
 #######################################################
 ##############berry workflow 1  # the following functions are for comparisons between dense data and filtered data
 #### data is hardcoded because these are not production functions
@@ -3613,6 +3623,182 @@ def compare_chart_rmse(folder,id,folder1,id1, outpath, suffix="", outstats=None,
         outstats.write(suffix+ "," + id + "," + info["name"].split()[0] + "," +addendum + "," +  id1 + "," + info1["name"].split()[0] + "," + addendum1+"\n")
 
 
+def compare_rmse_couples(paths, outpath):
+    """
+    Compare RMSE for each couple and output a camparison chart plus a text file with infos
+
+    the overview.csv file structure is:
+        id	id1	file1	file1_info	id2	file2	file2_info
+    0	a00bca573171a4ff2a8ab70d58438dec0	simple	TFT	a01b2eada44b8426391d94c5249a025ab	moving	TFF
+    1	a00bca573171a4ff2a8ab70d58438dec0	simple	TFT	a066f6d0e9a0d49d2999c3714c5f9ed34	inverse	FTF
+
+    :param paths: a list of paths to the folders
+    :param outpath: the folder to store the charts
+    :return:
+    """
+
+    #id = "a40b9fc7181184bf0b9835f830a677513"
+    #folder = "/vagrant/code/pysdss/data/output/text/analysis0806_steps2to100/" + id + "/"
+    #id1 = "a7aa8d3e709ce42a4ba17ebee02daf66f"
+    #folder1 = "/vagrant/code/pysdss/data/output/text/analysys1906_krigingsteps5to100/" + id1 + "/"
+    #outpath = "/vagrant/code/pysdss/data/output/text/"
+
+    #open a file to write infos about the comparison charts
+    outstats = open(outpath+"/overview.csv","w")
+    outstats.write("id,id1,file1,file1_info,id2,file2,file2_info\n")
+
+    #make all the couple combinations for file names
+    combinations = itertools.combinations(paths, 2)
+    for i,path in enumerate(combinations):
+        b = os.path.basename(path[0])
+        id = b if b.strip() != '' else path[0].split('/')[-2]
+        b = os.path.basename(path[0])
+        id1 = b if b.strip() != '' else path[1].split('/')[-2]
+        compare_chart_rmse(path[0], id, path[1], id1, outpath, suffix= str(i), outstats=outstats, useperc=True)
+    outstats.close()
+
+
+
+def publish_rsme_comparisons(path,outpath,typ="",keys=[], returnlist=False):
+    """
+    Find pictures for avg or estimates rmse, filter by keys, and publish as tables in a Word filw (.docx)
+
+    -pass one key to find all the images with that key
+    -pass2 keys for filtering both subcomponents of the image
+        -the same key  "simple","simple"     "TFT","TFT"
+        -different keys  "simpleTFT", "TTT"
+        -one is subkey   "simpleTFT", "TFT"
+
+
+    image names have this structure:
+    - delta_avg_rmse_comparison0_simpleTFT_movingTFF.png
+    - delta_estimates_rmse_comparison427_inverseTFF_inverseTTF.png
+
+
+    :param path: path to folder with images only
+    :param outpath: the folder to output the .docx file
+    :param typ: "avg"  or  "estimates", this will be the first filter
+    :param keys: list with one ot 2 query keys, this will be the second filter
+    :param returnlist: True to return a list of the filtered files
+    :return: a list of filtered file names if returnlist==True
+    """
+
+    #find all images
+    files = [d for d in os.listdir(path) if not os.path.isdir(os.path.join(path, d))]
+    # filter "averages" or "estimates" charts
+    files = [d for d in files if typ in d]
+    #filter by keys
+    if len(keys) < 1: raise ValueError("pass 2 keys")
+    if len(keys)==1: #only 1 key, just find everything with that key
+        files = [d for d in files if (keys[0] in d)]
+    else:
+        if keys[0] == keys[1]: #same key, be sure the key is available ywice in the file
+            files = [d for d in files if (len([m for m in re.finditer(keys[0], d)]) > 1)]
+        else:
+            #if keys[0] in keys[1] and len(keys[0]) == 3 : #we have 1 subkey then be sure this is available twice in the file
+            if keys[0] in keys[1]:
+                files = [d for d in files if (keys[1] in d and len([m for m in re.finditer(keys[0], d)]) > 1)]
+            #elif keys[1] in keys[0] and len(keys[1]) == 3:#we have 1 subkey then be sure this is available twice in the file
+            elif keys[1] in keys[0]:
+                files = [d for d in files if (keys[0] in d and len([m for m in re.finditer(keys[1], d)]) > 1)]
+            else: #2 different keys
+                files = [d for d in files if (keys[0] in d and keys[1] in d)]  # filter "averages" or "estimates" charts
+
+    #make the .docx document , add a table , and put images inside the table
+    document = Document()
+    table = document.add_table(cols=2, rows=math.ceil(len(files)/2)) #calculate the number of cells for a table with 2 rows
+    i=0
+    for row in table.rows:
+        for cell in row.cells:
+            if i<len(files):
+                paragraph = cell.paragraphs[0]
+                run = paragraph.add_run()
+                run.add_picture(path+"/"+files[i], width=Cm(7.5))
+                i+=1
+
+    #output name different if 1 or 2 keys
+    if len(keys)==1:
+        document.save(outpath + "/" + typ + "_" + keys[0] + ".docx")
+    else:
+        document.save(outpath+"/" + typ + "_"+ keys[0] + "_" + keys[1] +".docx")
+
+    #print(files)
+    if returnlist:
+        return files
+
+
+def grab_image_fromhtml(path, filename):
+    """
+    Grab a bokeh chart from an html page with phantojs(must be installed on th system)
+    :param path: full path to the html page
+    :param filename: full path to png output file
+    :return: None
+    """
+
+    import selenium.webdriver as webdriver
+    import PIL.Image as Image
+    import io
+
+    driver = webdriver.PhantomJS()
+    driver.get("file:///" + path)
+
+    ## resize for PhantomJS compat
+    driver.execute_script("document.body.style.width = '100%';")
+
+    #get a screenshot of the page and then resize to the bokeh chart boundaries
+    png = driver.get_screenshot_as_png()
+    bounding_rect_script = "return document.getElementsByClassName('bk-root')[0].children[0].getBoundingClientRect()"
+    b_rect = driver.execute_script(bounding_rect_script)
+
+    driver.quit()
+
+    #crop and save the image
+    image = Image.open(io.BytesIO(png))
+    cropped_image = image.crop((b_rect["left"], b_rect["top"], b_rect["right"], b_rect["bottom"]))
+    cropped_image.save(filename)
+
+
+def export_estimated_berries_tables(rootdir, dirs,outpath):
+    """
+    This function will output a word document with tables, table will store the charts with the comparison of the
+    estimated berries for each vineyard row at a specific step
+    the charts are granned from the  "/charts/estimatedberries/estimated_stepXX.html" files
+    :param rootdir: the root directory with the interpolation directories
+    :param dirs: a list of interpolation directories
+    :param outpath: the path to output the .docx file
+    :return:
+    """
+
+    document = Document() #word document
+
+    fulldirs = [rootdir + dir + "/charts/estimatedberries/" for dir in dirs]
+    for k,path in enumerate(fulldirs):
+        # find all html pages
+        print("finding html files")
+        files = [d for d in os.listdir(path) if not os.path.isdir(os.path.join(path, d))]
+
+        steps = [int(d.split("estimated_step")[1].split(".")[0]) for d in files]
+        steps.sort()
+
+        print("make a table")
+        #make the .docx document , add a table , and put images inside the table
+        document.add_paragraph(dirs[k])
+        table = document.add_table(cols=2, rows=math.ceil(len(files)/2)) #calculate the number of cells for a table with 2 rows
+        i=0
+        for row in table.rows:
+            for cell in row.cells:
+                if i<len(files):
+                    paragraph = cell.paragraphs[0]
+                    run = paragraph.add_run()
+                    #save a tmp image as png and add to the table
+                    grab_image_fromhtml(path +"/estimated_step"+str(steps[i])+".html", outpath+"/tmp.png")
+                    run.add_picture(outpath+"/tmp.png", width=Cm(7.5))
+                    i+=1
+        document.add_page_break()
+
+    document.save(outpath + "/estimated_berries_tables.docx")
+
+
 def chart_estimated_berries(folder,id, steps=[], useperc=True):
     """Output charts of the estimated berries original data vs filtered data
     :param folder: folder path
@@ -4109,6 +4295,216 @@ if __name__ == "__main__":
     #######################################KRIGING#################################
 
 
+    #################################################################
+    ''' Compare RMSE for each couple and output a text file with directory infos and camparison charts
+    maindir = "/vagrant/code/pysdss/data/output/text/analysys2206"
+    #dirs = os.listdir("/vagrant/code/pysdss/data/output/text/analysys2206")
+    dirs = [d for d in os.listdir(maindir) if os.path.isdir(os.path.join(maindir, d))]
+    paths = [ maindir + "/" + dir + "/" for dir in dirs]
+    if not os.path.exists(maindir+"/comparisons"): os.mkdir(maindir+"/comparisons")
+    outputinfotext(paths, maindir+"/comparisons") #write all the directory infos to a single file
+    compare_rmse_couples(paths, maindir+"/comparisons")
+    '''
+    ################################################################
+
+
+    ######### OUTPUT 32 combinations  (8*4) ############################################
+
+    def analysis_32combinations():
+
+        ###run interpolation for all the combinations and output the charts
+        # change the hardcoded variables before running
+
+        #random_filter -> True for random filtering
+        #force_interpolation_by_row -> True to force interpolation by vineyard row
+        #first_last -> True to take the first and last point of a vineyard row
+
+
+
+        ################### AVERAGE     ---- INVDIST #####################
+
+        interp = ["average", "invdist"]
+        #interp = ["invdist"]
+        grades = ['a', 'b', 'c', 'd']
+        steps = [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
+        # random_filter,force_interpolation_by_row, first_last
+        combinations = [
+            # [False, False, False],
+            # [False, False, True],
+            # [False, True, False],
+            # [False, True, True],
+            # [True, False, False], ##########error? step100
+            # [True, False, True],
+            # [True, True, False],#####error? step100
+            # [True, True, True]
+        ]
+
+        for i in interp:
+            for c in combinations:
+
+                # original worflow with ordered filter and overlapping interpolation
+                id, stats = berrycolor_workflow_1(steps=steps, interp=i, random_filter=c[0],
+                                                  force_interpolation_by_row=c[1], first_last=c[2])
+                folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+                fileIO.save_object(folder + id + "_statistics", stats)
+                test_interpret_result(stats, id, folder)
+                point = folder + id + "_keep.csv"
+
+                if c[1]:
+                    test_compare_raster_totruth_byrow(point, id, folder, steps=steps, clean=[[-1], [0]])
+                else:
+                    test_compare_raster_totruth(point, id, folder, steps=steps, clean=[[-1], [0]])
+
+                print("calculate rmse")
+                calculate_rmse_row(folder, id, steps=steps)
+                estimate_berries_byrow(folder, id, steps=steps)
+                calculate_rmse(folder, id, steps=steps)
+                print("make charts")
+                chart_rmse(folder, id)
+                chart_estimated_berries(folder, id, steps=steps, useperc=True)
+                chart_estimates_comparison(folder, id, steps=steps, useperc=True)
+                chart_visible_berries(folder, id, steps=steps, useperc=True)
+                chart_colorgrades(folder, id, grades, steps, useperc=True)
+
+        ############   kriging ------------- ########################
+
+        # interp = ["ordinary", "simple"]
+        interp = ["ordinary"]
+        # interp = ["simple"]
+        grades = ['a', 'b', 'c', 'd']
+        # steps = [5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
+        steps = [50]
+        counts = ["visible"]
+        variogram = "global"
+        # random_filter,force_interpolation_by_row, first_last
+        combinations = [
+            # [False, False, False],
+            # [False, False, True],
+            # [False, True, False],
+            # [False, True, True],
+            [True, False, False],  # taking too much time?
+            # [True, False, True], #taking too much time?
+            # [True, True, False],
+            # [True, True, True]
+        ]
+
+        for i in interp:
+            for c in combinations:
+
+                id, stats = berrycolor_workflow_kriging(steps=steps, counts=counts, interp=i, random_filter=c[0],
+                                                        force_interpolation_by_row=c[1], first_last=c[2],
+                                                        variogram=variogram,
+                                                        rowdirection="x", epsg="32611")
+
+                # id ="a76b7da4d98084ac5863db7adc77eb957"
+
+                folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+                fileIO.save_object(folder + id + "_statistics_" + i, stats)
+
+                colmodel = ["avg", "std", "area", "nozero_area", "zero_area", "visible_count",
+                            "visible_avg", "visible_std"]
+
+                # stats = fileIO.load_object(folder + id + "_statistics_" + i)
+                test_interpret_result(stats, id, folder, colmodel)
+
+                point = folder + id + "_keep.csv"
+                if c[1]:
+                    test_compare_raster_totruth_byrow(point, id, folder, steps=steps, clean=[[-1], [0]], counts=counts,
+                                                      suffix="_" + i + variogram)
+                else:
+                    test_compare_raster_totruth(point, id, folder, steps=steps, clean=[[-1], [0]], counts=counts,
+                                                suffix="_" + i + variogram)
+
+                print("calculate rmse")
+                calculate_rmse_row(folder, id, steps=steps)
+                estimate_berries_byrow(folder, id, steps=steps)
+                calculate_rmse(folder, id, steps=steps)
+                print("make charts")
+                chart_rmse(folder, id)
+                chart_estimated_berries(folder, id, steps=steps, useperc=True)
+                chart_estimates_comparison(folder, id, steps=steps, useperc=True)
+                chart_visible_berries(folder, id, steps=steps, useperc=True)
+                chart_colorgrades(folder, id, grades, steps, useperc=True)
+
+
+    # analysis_32combinations()
+
+
+    ##############  publish docs files with the rsme comparisons images in tables
+    chartpath = "/vagrant/code/pysdss/data/output/text/analysys2206/comparisons/charts"
+    if not os.path.exists(chartpath + "/docs"): os.mkdir(chartpath + "/docs")
+
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs", "avg",["movingFFF", "moving"])
+    ################################################
+
+    ##check moving average
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["movingFFF", "moving"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["movingFFF", "moving"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["movingTT", "movingFT"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["movingTT", "movingFT"])
+
+    ##check inverse distance
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["inverseFFF", "inverse"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["inverseTT", "inverseFT"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["inverseFFF", "inverse"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["inverseTT", "inverseFT"])
+
+    '''
+    ##check ordinary kriging
+    publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["ordinaryFFF", "ordinary"])
+    publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["ordinaryTT", "ordinaryFT"])
+    publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["ordinaryFFF", "ordinary"])
+    publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["ordinaryTT", "ordinaryFT"])
+    '''
+
+    '''
+    ## check simple kriging
+    publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["simpleFFF", "simple"])
+    publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["simpleTT", "simpleFT"])
+    publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["simpleFFF", "simple"])
+    publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["simpleTT", "simpleFT"])
+    '''
+
+    '''
+    ## from the above i found that ordered filter restricted to same row gives better results
+    ## now i can compare ordered/same row for the 4 interpolation methods (10 comparisons * 2)
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["movingFT", "movingFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["movingFT", "inverseFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["movingFT", "ordinaryFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["movingFT", "simpleFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["inverseFT", "inverseFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["inverseFT", "ordinaryFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["inverseFT", "simpleFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["ordinaryFT", "simpleFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["ordinaryFT", "ordinaryFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["simpleFT", "simpleFT"])
+    '''
+
+    '''
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "estimates", ["movingFT", "movingFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "estimates", ["movingFT", "inverseFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "estimates", ["movingFT", "ordinaryFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "estimates", ["movingFT", "simpleFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "estimates", ["inverseFT", "inverseFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "estimates", ["inverseFT", "ordinaryFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "estimates", ["inverseFT", "simpleFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "estimates", ["ordinaryFT", "simpleFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "estimates", ["ordinaryFT", "ordinaryFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "estimates", ["simpleFT", "simpleFT"])
+    '''
+
+    '''eporting estimated berries tables for interpolations found after the analysis of the above rmse
+    rootdir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
+    dirs=["a066f6d0e9a0d49d2999c3714c5f9ed34","a1a126f124b7e4f5e99d4ddc553f71725","a37809e20381e49778efa56222f9bcbce",
+    "a3f8537dee1324c088bdc84562c6c4f0c","a923f00d5dbdc4d988b128377c92dc19a","a97304dec81854237a9cd9523e28daf52",
+    "aa2de2f54ca16491fa46e52eb9c2b3717","aff8a205a38f34bb3bc2cd177bed15dc4"]
+    outpath =  rootdir +  "/comparisons/charts/docs/"
+    export_estimated_berries_tables(rootdir, dirs, outpath)
+    '''
+    ###################################################################
+    ############################  TESTS ###############################
+    ###################################################################
+
     def kriger_tests():
         steps = [5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
         steps = [50, 100]
@@ -4254,164 +4650,10 @@ if __name__ == "__main__":
     #outinfos_tests()
 
 
-    def compare_rmse_couples(paths, outpath):
-        """
-        Compare RMSE for each couple and output a camparison chart
-        :param paths: a list of paths to the folders
-        :param outpath:
-        :return:
-        """
-
-        #id = "a40b9fc7181184bf0b9835f830a677513"
-        #folder = "/vagrant/code/pysdss/data/output/text/analysis0806_steps2to100/" + id + "/"
-        #id1 = "a7aa8d3e709ce42a4ba17ebee02daf66f"
-        #folder1 = "/vagrant/code/pysdss/data/output/text/analysys1906_krigingsteps5to100/" + id1 + "/"
-        #outpath = "/vagrant/code/pysdss/data/output/text/"
-
-        import itertools
-        import os.path
-
-        #open a file to write infos about the comparison charts
-        outstats = open(outpath+"/overview.csv","w")
-        outstats.write("id,id1,file1,file1_info,id2,file2,file2_info\n")
-
-        #make all the couple combinatoins for file names
-        combinations = itertools.combinations(paths, 2)
-        for i,path in enumerate(combinations):
-            b = os.path.basename(path[0])
-            id = b if b.strip() != '' else path[0].split('/')[-2]
-            b = os.path.basename(path[0])
-            id1 = b if b.strip() != '' else path[1].split('/')[-2]
-            compare_chart_rmse(path[0], id, path[1], id1, outpath, suffix= str(i), outstats=outstats, useperc=True)
-        outstats.close()
-
-    '''
-    maindir = "/vagrant/code/pysdss/data/output/text/analysys2206"
-    #dirs = os.listdir("/vagrant/code/pysdss/data/output/text/analysys2206")
-    dirs = [d for d in os.listdir(maindir) if os.path.isdir(os.path.join(maindir, d))]
-    paths = [ maindir + "/" + dir + "/" for dir in dirs]
-    if not os.path.exists(maindir+"/comparisons"): os.mkdir(maindir+"/comparisons")
-    outputinfotext(paths, maindir+"/comparisons") #write all the directory infos to a single file
-    compare_rmse_couples(paths, maindir+"/comparisons")
-    '''
-
-
-    ######### OUTPUT 32 combinations  (8*4)
-
-    def analysis_32combinations():
-
-        ################### AVERAGE     ---- INVDIST #####################
-
-        interp =[]# ["average", "invdist"]
-        interp = ["invdist"]
-        grades = ['a', 'b', 'c', 'd']
-        steps = [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
-        # random_filter,force_interpolation_by_row, first_last
-        combinations = [
-            #[False, False, False],
-            #[False, False, True],
-            #[False, True, False],
-            #[False, True, True],
-            #[True, False, False], ##########error? step100
-            #[True, False, True],
-            #[True, True, False],#####error? step100
-            #[True, True, True]
-        ]
-
-        for i in interp:
-            for c in combinations:
-
-                # original worflow with ordered filter and overlapping interpolation
-                id, stats = berrycolor_workflow_1(steps=steps, interp=i, random_filter=c[0],
-                                                  force_interpolation_by_row=c[1], first_last=c[2])
-                folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
-                fileIO.save_object(folder + id + "_statistics", stats)
-                test_interpret_result(stats, id, folder)
-                point = folder + id + "_keep.csv"
-
-                if c[1]:
-                    test_compare_raster_totruth_byrow(point, id, folder, steps=steps, clean=[[-1], [0]])
-                else:
-                    test_compare_raster_totruth(point, id, folder, steps=steps, clean=[[-1], [0]])
-
-                print("calculate rmse")
-                calculate_rmse_row(folder, id, steps=steps)
-                estimate_berries_byrow(folder, id, steps=steps)
-                calculate_rmse(folder, id, steps=steps)
-                print("make charts")
-                chart_rmse(folder, id)
-                chart_estimated_berries(folder, id, steps=steps, useperc=True)
-                chart_estimates_comparison(folder, id, steps=steps, useperc=True)
-                chart_visible_berries(folder, id, steps=steps, useperc=True)
-                chart_colorgrades(folder, id, grades, steps, useperc=True)
-
-        ############   kriging ------------- ########################
-
-        #interp = ["ordinary", "simple"]
-        interp = ["ordinary"]
-        #interp = ["simple"]
-        grades = ['a', 'b', 'c', 'd']
-        #steps = [5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
-        steps = [50]
-        counts = ["visible"]
-        variogram = "global"
-        # random_filter,force_interpolation_by_row, first_last
-        combinations = [
-            #[False, False, False],
-            #[False, False, True],
-            #[False, True, False],
-            #[False, True, True],
-            [True, False, False],  #taking too much time?
-            #[True, False, True], #taking too much time?
-            #[True, True, False],
-            #[True, True, True]
-        ]
-
-        for i in interp:
-            for c in combinations:
-
-                id, stats = berrycolor_workflow_kriging(steps=steps, counts=counts, interp=i, random_filter=c[0],
-                            force_interpolation_by_row=c[1], first_last=c[2], variogram = variogram,
-                            rowdirection = "x", epsg = "32611")
-
-                #id ="a76b7da4d98084ac5863db7adc77eb957"
-
-                folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
-                fileIO.save_object(folder + id + "_statistics_" + i, stats)
-
-                colmodel = ["avg", "std", "area", "nozero_area", "zero_area", "visible_count",
-                            "visible_avg", "visible_std"]
-
-                #stats = fileIO.load_object(folder + id + "_statistics_" + i)
-                test_interpret_result(stats, id, folder, colmodel)
-
-                point = folder + id + "_keep.csv"
-                if c[1]:
-                    test_compare_raster_totruth_byrow(point, id, folder, steps=steps, clean=[[-1], [0]], counts=counts,
-                                                      suffix="_" + i + variogram)
-                else:
-                    test_compare_raster_totruth(point, id, folder, steps=steps, clean=[[-1], [0]], counts=counts,
-                                                suffix="_" + i + variogram)
-
-                print("calculate rmse")
-                calculate_rmse_row(folder, id, steps=steps)
-                estimate_berries_byrow(folder, id, steps=steps)
-                calculate_rmse(folder, id, steps=steps)
-                print("make charts")
-                chart_rmse(folder, id)
-                chart_estimated_berries(folder, id, steps=steps, useperc=True)
-                chart_estimates_comparison(folder, id, steps=steps, useperc=True)
-                chart_visible_berries(folder, id, steps=steps, useperc=True)
-                chart_colorgrades(folder, id, grades, steps, useperc=True)
-
-
-    #analysis_32combinations()
-
-
 
     def export_word_test(outdir, img):
         """
-        Testing exporting word file with text and table with pictures
+        just testing creating and exporting word file with text and table with pictures
         :return:
         """
         import docx
@@ -4463,70 +4705,3 @@ if __name__ == "__main__":
         document.save(outdir+'/test.docx')
 
     #export_word_test("/vagrant/code/pysdss/data/output/text","/vagrant/code/pysdss/data/output/text/analysys2206/comparisons/charts/delta_avg_rmse_comparison0_simpleTFT_movingTFF.png"  )
-
-
-    def find_pictures(path,outpath,typ="",keys=[]):
-        """
-        Find pictures for avg or estimates rmse and filter by keys
-
-        -pass one key to find all the images with that key
-        -pass2 keys
-            -the same key  "simple","simple"     "TFT","TFT"
-            -different keys  "simpleTFT", "TTT"
-            -one is subkey   "simpleTFT", "TFT"
-
-        :param path: path to folder with images only
-        :param typ: "avg" "estimates"
-        :param keys: list with query keys
-        :return: a list of filtered file names
-        """
-
-        import docx
-        from docx import Document
-        from docx.shared import Cm
-
-
-        import re
-
-        #find all images
-        files = [d for d in os.listdir(path) if not os.path.isdir(os.path.join(path, d))]
-        # filter "averages" or "estimates" charts
-        files = [d for d in files if typ in d]
-        #filter by keys
-        if len(keys) < 1: raise ValueError("pass 2 keys")
-        if len(keys)==1: #only 1 key, just find everything with that key
-            files = [d for d in files if (keys[0] in d)]
-        else:
-            if keys[0] == keys[1]: #same key, be sure the key is available ywice in the file
-                files = [d for d in files if (len([m for m in re.finditer(keys[0], d)]) > 1)]
-            else:
-                if keys[0] in keys[1] and len(keys[0]) == 3: #we have 1 subkey then be sure this is available twice in the file
-                    files = [d for d in files if (keys[1] in d and len([m for m in re.finditer(keys[0], d)]) > 1)]
-                elif keys[1] in keys[0] and len(keys[1]) == 3:#we have 1 subkey then be sure this is available twice in the file
-                    files = [d for d in files if (keys[0] in d and len([m for m in re.finditer(keys[1], d)]) > 1)]
-                else: #2 different keys
-                    files = [d for d in files if (keys[0] in d and keys[1] in d)]  # filter "averages" or "estimates" charts
-
-        document = Document()
-        table = document.add_table(cols=2, rows=math.ceil(len(files)/2)) #calculate the number of cells for a table with 2 rows
-        i=0
-        for row in table.rows:
-            for cell in row.cells:
-                if i<len(files):
-                    paragraph = cell.paragraphs[0]
-                    run = paragraph.add_run()
-                    run.add_picture(path+"/"+files[i], width=Cm(7.5))
-                    i+=1
-
-        if len(keys)==1:
-            document.save(outpath + "/" + typ + "_" + keys[0] + ".docx")
-        else:
-            document.save(outpath+"/" + typ + "_"+ keys[0] + "_" + keys[1] +".docx")
-
-        #print(files)
-        #return files
-
-
-    chartpath = "/vagrant/code/pysdss/data/output/text/analysys2206/comparisons/charts"
-    if not os.path.exists(chartpath + "/docs"): os.mkdir(chartpath + "/docs")
-    find_pictures(chartpath,chartpath + "/docs", "estimates",["simple"])
