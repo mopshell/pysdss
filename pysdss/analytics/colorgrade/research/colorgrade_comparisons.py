@@ -55,6 +55,7 @@ from bokeh.models import NumeralTickFormatter, Label
 from bokeh.palettes import d3
 from bokeh.io import export_png  #new in veersion 0.12.6
 
+
 #from rasterstats import point_query
 
 from docx import Document
@@ -3252,6 +3253,8 @@ def estimate_berries_byrow(folder,id, steps=[2, 3, 4, 5, 6, 7, 8, 9, 10]):
 
     data comes from _ERRORSTATISTICS.csv
 
+    will output file _count_stats_byrow.csv
+
     :param id:
     :param folder:
     :param steps:
@@ -3312,6 +3315,60 @@ def estimate_berries_byrow(folder,id, steps=[2, 3, 4, 5, 6, 7, 8, 9, 10]):
     np.savetxt(folder + id + "_count_stats_byrow.csv", out, fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='',
                comments='')
 
+
+
+def estimate_colors_byrow(folder,id, steps=[2, 3, 4, 5, 6, 7, 8, 9, 10], colorgrades = ["a", "b", "c", "d"]):
+
+    """ Output comparison between original points (with no filter) and interploated points for average,
+
+    data comes from _ERRORSTATISTICS.csv
+
+    will output file _color_stats_byrow.csv
+
+    :param folder:
+    :param id:
+    :param steps:
+    :params colorgrades:
+    :return: None
+    """
+
+    left_fields = ["row"]
+    right_fields = []
+    for c in colorgrades:
+        right_fields.append(c+"_avg")
+    left_fields = left_fields + right_fields
+
+    #"_rsme_row.csv contains row and x_avg, the average from the original point data
+    path = folder + id + "_rsme_row.csv"
+    df = pd.read_csv(path, usecols= left_fields+right_fields)
+
+    # initialize output array
+    out = np.zeros((df.shape[0], len(left_fields) + len(right_fields)*2*len(steps)))
+    out[:, : len(left_fields)] = df.values[:,:len(left_fields)]
+
+
+    startindex = len(left_fields)
+    for c in colorgrades:
+        # x_output contains  "stepn_avg"
+        path = folder + id + "_"+c+"_output.csv"
+        cls = [ "step"+ str(s) +"_avg" for s in steps]
+        df2 = pd.read_csv(path, usecols= cls)
+
+        for s in steps:
+
+            out[:,startindex] = df2["step"+ str(s) +"_avg"].values
+            out[:, startindex+1] = np.absolute(out[:,startindex] - df[ c +"_avg"].values)
+
+            startindex+=2
+
+    # save array to disk
+    for c in colorgrades:
+        for s in steps:
+            left_fields +=[ "step"+ str(s)+"_"+ c +"_avg","step"+ str(s)+"_"+ c +"_delta_avg"]
+
+    outcols = ','.join(left_fields)
+    np.savetxt(folder + id + "_color_stats_byrow.csv", out, fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='',
+               comments='')
 
 ########CALCULATE RMSE#######################
 
@@ -3440,6 +3497,49 @@ def calculate_rmse(folder,id,steps=[2,3,4,5,6,7,8,9,10]):
     np.savetxt(folder + id + "_rsme.csv",arr , fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='', comments='')
 
 
+def calculate_rmse_color(folder,id,steps=[2,3,4,5,6,7,8,9,10],colorgrades = ["a", "b", "c", "d"]):
+    """
+    Calculate the root mean square error for the colorgrade delta average  . The differences
+    are calculated per number of vineyard rows and the number of items are the rows
+
+    output  _n_rmse.csv for each colorgrade
+    :param folder:
+    :param id:
+    :param nsteps:
+    :return:
+    """
+
+    #create pandas dataframe
+    path = folder + id + "_color_stats_byrow.csv"
+    df = pd.read_csv(path)
+
+    # number of vineyard rows
+    nrows = df.shape[0]
+
+
+
+    #cretae empty numpy array
+    arr = np.zeros((1, len(steps)))
+
+
+    for c in colorgrades:
+
+        # store the output field named
+        outcols_0 = []
+        #iterate the steps and fill in the array
+        for i,s in enumerate(steps):
+
+            #rmse for visible_avg, add to the output array, append the column name
+            x =  math.sqrt((np.sum(np.power(df["step"+str(s)+"_"+c+"_delta_avg"].values,2))/nrows))
+            arr[0, i] = x
+            outcols_0.append("step"+str(s)+"_delta_avg_rmse")
+
+        outcols = ','.join(outcols_0)
+        #export array to disk
+        np.savetxt(folder + id + "_" + c + "_rsme.csv",arr , fmt='%.3f', delimiter=',', newline='\n', header=outcols, footer='', comments='')
+
+
+
 #############CHARTING#####################
 
 
@@ -3483,7 +3583,45 @@ def chart_rmse(folder,id, useperc=True):
     save(f)
 
 
-def compare_chart_rmse(folder,id,folder1,id1, outpath, suffix="", outstats=None,exportimage=True, useperc=True):
+def chart_rmse_color(folder,id, colorgrades = ["a", "b", "c", "d"], useperc=True):
+    """Output charts for rmse delta_avg number of berries   and  delta_estimates number of berries
+    :param folder:
+    :param id:
+    :param useperc: True to output percentages, else output the step
+    :return: None
+    """
+
+
+    for c in colorgrades:
+
+        #open pandas dataframe
+        path = folder + id + "_"+c+"_rsme.csv"
+        df = pd.read_csv(path)
+
+        ncols = df.shape[1]
+        #the categorical labels for x axis (step2,step3,step4,....)
+        x_labels = [i.split("_")[0] for i in df.columns]
+
+        #x_label_num =  [ int(n[4:]) for n in x_labels].sort()
+        #x_labels_all =  ["step"+str(i) for i in range(2,x_label_num[-1]+1)]
+
+        #convert to percentage
+        if useperc:
+            x_labels = [str(int(1/int(i[4:])*100))+"%" for i in x_labels]
+
+        #make new chart directory if it does not exist
+        if not os.path.exists(folder +"/charts"):
+            os.mkdir(folder + "/charts")
+
+        #chart ["stepx_delta_avg_rmse"]
+        output_file(folder + "/charts/"+c+"_delta_avg_rmse.html",title=c+"_delta_avg_rmse")
+        f = figure(x_range=x_labels, title="Delta RMSE for average colourgrade "+c.upper()+" per vineyard row")
+        f.line(x_labels , df.values[0,:ncols], line_width=2)
+        save(f)
+
+
+
+def compare_chart_rmse(folder,id,folder1,id1, outpath, colorgrade="", suffix="", outstats=None,exportimage=True, useperc=True):
     """
     Compare the rmse for 2 datasets (calculate_rmse() should be used beforehand to get the rmse)
     :param folder: first file folder
@@ -3497,21 +3635,20 @@ def compare_chart_rmse(folder,id,folder1,id1, outpath, suffix="", outstats=None,
     :return:
     """
 
-    from bokeh.io import export_png
-
-
     if exportimage:
         outchart = outpath+"/charts"
         if not os.path.exists(outchart): os.mkdir(outchart)
 
     ################# first dataset
     #open pandas dataframe
-    path = folder + "/" + id + "_rsme.csv"
+    if colorgrade: path = folder + "/" + id + "_" + colorgrade + "_rsme.csv"
+    else:path = folder + "/" + id + "_rsme.csv"
     df = pd.read_csv(path)
 
     ncols = df.shape[1]
     #the categorical labels for x axis (step2,step3,step4,....)
-    x_labels = [int(i.split("_")[0][4:]) for i in df.columns][:int(len(df.columns) / 2)]
+    if colorgrade:  x_labels = [int(i.split("_")[0][4:]) for i in df.columns]
+    else: x_labels = [int(i.split("_")[0][4:]) for i in df.columns][:int(len(df.columns) / 2)]
 
     #x_label_num =  [ int(n[4:]) for n in x_labels].sort()
     #x_labels_all =  ["step"+str(i) for i in range(2,x_label_num[-1]+1)]
@@ -3522,12 +3659,14 @@ def compare_chart_rmse(folder,id,folder1,id1, outpath, suffix="", outstats=None,
 
     ################### second dataset
     # open pandas dataframe
-    path = folder1 + "/" + id1 + "_rsme.csv"
+    if colorgrade: path = folder1 + "/" + id1 + "_" + colorgrade + "_rsme.csv"
+    else: path = folder1 + "/" + id1 + "_rsme.csv"
     df1 = pd.read_csv(path)
 
     ncols1 = df1.shape[1]
     # the categorical labels for x axis (step2,step3,step4,....)
-    x_labels1 = [int(i.split("_")[0][4:]) for i in df1.columns][:int(len(df1.columns) / 2)]
+    if colorgrade:  x_labels1 = [int(i.split("_")[0][4:]) for i in df1.columns]
+    else: x_labels1 = [int(i.split("_")[0][4:]) for i in df1.columns][:int(len(df1.columns) / 2)]
 
     # x_label_num =  [ int(n[4:]) for n in x_labels].sort()
     # x_labels_all =  ["step"+str(i) for i in range(2,x_label_num[-1]+1)]
@@ -3575,11 +3714,19 @@ def compare_chart_rmse(folder,id,folder1,id1, outpath, suffix="", outstats=None,
     addendum = ("T" if info["filter_type"]=="random" else "F") + ("T" if info["interpolation"] =="onlyrows" else "F") + ("T" if info["first_last"]==True else "F")
     addendum1 = ("T" if info1["filter_type"]=="random" else "F") + ("T" if info1["interpolation"] =="onlyrows" else "F") + ("T" if info1["first_last"]==True else "F")
 
-    fname= "/delta_avg_rmse_comparison"+suffix+ "_" + info["name"].split()[0] + addendum + "_" + info1["name"].split()[0] + addendum1
-    output_file(outpath+fname+".html",title="delta_avg_rmse_comarison")
-    f = figure(x_range=xlabels, title="Delta RMSE for average number of berries per vineyard row")
-    f.line(x_labels , df.values[0,0:int(ncols/2)], line_width=2, color="blue",legend=legend1)
-    f.line(x_labels1 , df1.values[0,0:int(ncols1/2)], line_width=2,color="green",legend=legend2)
+    if colorgrade:
+        fname= "/"+colorgrade+"_delta_avg_rmse_comparison"+suffix+ "_" + info["name"].split()[0] + addendum + "_" + info1["name"].split()[0] + addendum1
+        output_file(outpath+fname+".html",title=colorgrade+"_delta_avg_rmse_comarison")
+        f = figure(x_range=xlabels, title="Delta RMSE for colourgrade "+colorgrade.upper()+" per vineyard row")
+        f.line(x_labels , df.values[0,:ncols], line_width=2, color="blue",legend=legend1)
+        f.line(x_labels1 , df1.values[0,:ncols1], line_width=2,color="green",legend=legend2)
+    else:
+        fname= "/delta_avg_rmse_comparison"+suffix+ "_" + info["name"].split()[0] + addendum + "_" + info1["name"].split()[0] + addendum1
+        output_file(outpath+fname+".html",title="delta_avg_rmse_comarison")
+        f = figure(x_range=xlabels, title="Delta RMSE for average number of berries per vineyard row")
+        f.line(x_labels , df.values[0,0:int(ncols/2)], line_width=2, color="blue",legend=legend1)
+        f.line(x_labels1 , df1.values[0,0:int(ncols1/2)], line_width=2,color="green",legend=legend2)
+
 
     # making multiline labels /n and <br/> do not work
     first_label = Label(x=50, y=f.plot_height-50, x_units='screen', y_units='screen',
@@ -3600,34 +3747,36 @@ def compare_chart_rmse(folder,id,folder1,id1, outpath, suffix="", outstats=None,
 
 
     #chart ("stepx_delta_estimates_rmse")
-    fname = "/delta_estimates_rmse_comparison"+suffix+ "_" + info["name"].split()[0] + addendum + "_" + info1["name"].split()[0] + addendum1
-    output_file(outpath+fname+".html",title="delta_estimates_rmse_comparison")
-    f = figure(x_range=xlabels, title="Delta RMSE for total number of berries per vineyard row")
-    f.line(x_labels, df.values[0,int(ncols/2):], line_width=2, color="blue",legend=legend1)
-    f.line(x_labels1, df1.values[0,int(ncols1/2):], line_width=2,color="green", legend=legend2)
+    if colorgrade:
+        pass
+    else:
+        fname = "/delta_estimates_rmse_comparison"+suffix+ "_" + info["name"].split()[0] + addendum + "_" + info1["name"].split()[0] + addendum1
+        output_file(outpath+fname+".html",title="delta_estimates_rmse_comparison")
+        f = figure(x_range=xlabels, title="Delta RMSE for total number of berries per vineyard row")
+        f.line(x_labels, df.values[0,int(ncols/2):], line_width=2, color="blue",legend=legend1)
+        f.line(x_labels1, df1.values[0,int(ncols1/2):], line_width=2,color="green", legend=legend2)
 
-    first_label = Label(x=60, y= f.plot_height-50, x_units='screen', y_units='screen',
-                       text=info["name"].upper() + dupl1 + " -> Filter:" + info["filter_type"] +" - Interpolation:" + info["interpolation"]+" - First/Last:" + str(info["first_last"]),
-                        render_mode='canvas',background_fill_color='white', background_fill_alpha=1.0,text_font_size="7.5pt")
+        first_label = Label(x=60, y= f.plot_height-50, x_units='screen', y_units='screen',
+                           text=info["name"].upper() + dupl1 + " -> Filter:" + info["filter_type"] +" - Interpolation:" + info["interpolation"]+" - First/Last:" + str(info["first_last"]),
+                            render_mode='canvas',background_fill_color='white', background_fill_alpha=1.0,text_font_size="7.5pt")
 
-    second_label = Label(x=60, y= f.plot_height-70, x_units='screen', y_units='screen',
-                         text=info1["name"].upper() + dupl2 + " -> Filter:" + info1["filter_type"] + " - Interpolation:" + info1["interpolation"]+" - First/Last:" + str(info1["first_last"]),
-                        render_mode='canvas',background_fill_color='white', background_fill_alpha=1.0,text_font_size="7.5pt")
-    f.add_layout(first_label)
-    f.add_layout(second_label)
-    f.legend.label_text_font_size = "7pt"
-    f.legend.location = "bottom_right"
-    save(f)
+        second_label = Label(x=60, y= f.plot_height-70, x_units='screen', y_units='screen',
+                             text=info1["name"].upper() + dupl2 + " -> Filter:" + info1["filter_type"] + " - Interpolation:" + info1["interpolation"]+" - First/Last:" + str(info1["first_last"]),
+                            render_mode='canvas',background_fill_color='white', background_fill_alpha=1.0,text_font_size="7.5pt")
+        f.add_layout(first_label)
+        f.add_layout(second_label)
+        f.legend.label_text_font_size = "7pt"
+        f.legend.location = "bottom_right"
+        save(f)
 
-    if exportimage: export_png(f, filename=outchart + fname + ".png")
-
+        if exportimage: export_png(f, filename=outchart + fname + ".png")
 
     #write info to the output file
     if outstats:
         outstats.write(suffix+ "," + id + "," + info["name"].split()[0] + "," +addendum + "," +  id1 + "," + info1["name"].split()[0] + "," + addendum1+"\n")
 
 
-def compare_rmse_couples(paths, outpath):
+def compare_rmse_couples(paths, outpath, colorgrade=""):
     """
     Compare RMSE for each couple and output a camparison chart plus a text file with infos
 
@@ -3658,7 +3807,9 @@ def compare_rmse_couples(paths, outpath):
         id = b if b.strip() != '' else path[0].split('/')[-2]
         b = os.path.basename(path[0])
         id1 = b if b.strip() != '' else path[1].split('/')[-2]
-        compare_chart_rmse(path[0], id, path[1], id1, outpath, suffix= str(i), outstats=outstats, useperc=True)
+
+        if colorgrade:compare_chart_rmse(path[0], id, path[1], id1, outpath,colorgrade=colorgrade, suffix= str(i), outstats=outstats, useperc=True)
+        else:compare_chart_rmse(path[0], id, path[1], id1, outpath, suffix= str(i), outstats=outstats, useperc=True)
     outstats.close()
 
 
@@ -3762,7 +3913,7 @@ def export_estimated_berries_tables(rootdir, dirs,outpath):
     """
     This function will output a word document with tables, table will store the charts with the comparison of the
     estimated berries for each vineyard row at a specific step
-    the charts are granned from the  "/charts/estimatedberries/estimated_stepXX.html" files
+    the charts are grabbed from the  "/charts/estimatedberries/estimated_stepXX.html" files
     :param rootdir: the root directory with the interpolation directories
     :param dirs: a list of interpolation directories
     :param outpath: the path to output the .docx file
@@ -3797,6 +3948,50 @@ def export_estimated_berries_tables(rootdir, dirs,outpath):
         document.add_page_break()
 
     document.save(outpath + "/estimated_berries_tables.docx")
+
+
+def export_estimated_colors_tables(rootdir, dirs,outpath, colorgrades=["a","b","c","d"]):
+    """
+    This function will output a word document with tables, table will store the charts with the comparison of the
+    estimated colorgrades for each vineyard row at a specific step
+    the charts are grabbed from the  "/charts/estimatedberries/estimated_stepXX.html" files
+    :param rootdir: the root directory with the interpolation directories
+    :param dirs: a list of interpolation directories
+    :param outpath: the path to output the .docx file
+    :return:
+    """
+
+    document = Document() #word document
+
+    for c in colorgrades:
+
+        fulldirs = [rootdir + dir + "/charts/colorgrades/colors" + c.upper() + "_comparisons" for dir in dirs]
+        for k,path in enumerate(fulldirs):
+            # find all html pages
+            print("finding html files")
+            files = [d for d in os.listdir(path) if not os.path.isdir(os.path.join(path, d))]
+
+            steps = [int(d.split("estimated_" + c.upper() + "_step")[1].split(".")[0]) for d in files]
+            steps.sort()
+
+            print("make a table")
+            #make the .docx document , add a table , and put images inside the table
+            document.add_paragraph(dirs[k])
+            table = document.add_table(cols=2, rows=math.ceil(len(files)/2)) #calculate the number of cells for a table with 2 rows
+            i=0
+            for row in table.rows:
+                for cell in row.cells:
+                    if i<len(files):
+                        paragraph = cell.paragraphs[0]
+                        run = paragraph.add_run()
+                        #save a tmp image as png and add to the table
+                        grab_image_fromhtml(path +"/estimated_" + c.upper() + "_step"+str(steps[i])+".html", outpath+"/tmp.png")
+                        run.add_picture(outpath+"/tmp.png", width=Cm(7.5))
+                        i+=1
+            document.add_page_break()
+
+    document.save(outpath + "/estimated_colors_tables.docx")
+
 
 
 def chart_estimated_berries(folder,id, steps=[], useperc=True):
@@ -3835,6 +4030,57 @@ def chart_estimated_berries(folder,id, steps=[], useperc=True):
         f.xaxis.axis_label = "vineyard rows"
         f.yaxis.axis_label = "number of berries"
         save(f)
+
+
+def chart_estimated_colors(folder,id, steps=[], colorgrades=["a","b","c","d"], useperc=True):
+    """Output charts of the estimated average colorgrade, original data vs filtered data
+    :param folder: folder path
+    :param id: operation id
+    :param steps: list with steps to consider
+    :param colorgrades: colorgraes to consider
+    :param useperc: True to label steps as percentages
+    :return: None
+    """
+
+    path = folder + id + "_color_stats_byrow.csv"
+
+    #make new chart directory if it does not exist
+    if not os.path.exists(folder +"/charts"):
+        os.mkdir(folder + "/charts")
+
+    # make new chart directory if it does not exist
+    if not os.path.exists(folder + "/charts/colorgrades"):
+        os.mkdir(folder + "/charts/colorgrades")
+
+    cols = ["row"]
+    for c in colorgrades:
+        cols.append(c+"_avg")
+    for c in colorgrades:
+        cols = cols + ["step"+str(s)+ "_" + c + "_avg" for s in steps]
+
+    df = pd.read_csv(path, usecols=cols)
+
+
+    for c in colorgrades:
+
+        #make new chart directory if it does not exist
+        if not os.path.exists(folder +"/charts/colorgrades/colors" + c.upper() + "_comparisons"):
+            os.mkdir(folder + "/charts/colorgrades/colors" + c.upper() + "_comparisons")
+
+        steps_perc = [int(1 / int(s) * 100) for s in steps] if useperc else steps
+
+        for i,s in enumerate(steps):
+            output_file(folder +"/charts/colorgrades/colors" + c.upper() + "_comparisons/estimated_" + c.upper() + "_step"+str(s)+".html", title = "estimated_"+c.upper()+"step"+str(s))
+            f = figure(title="Estimated colourgrade " +c.upper()+ ": original VS "+str(steps_perc[i])+"%") if useperc else \
+                figure(title="Estimated colourgrade " +c.upper()+ ": original VS step"+str(s))
+            f.line(df["row"], df[ c + "_avg"], line_color="green", line_width=1, legend="Original")
+            f.line(df["row"], df["step"+str(s)+ "_" + c + "_avg"], line_color="red", line_width=1, legend=str(steps_perc[i])+"%" if useperc else "Step"+str(s))
+            f.legend.location = "top_left"
+            f.yaxis.formatter = NumeralTickFormatter(format="0.00")
+            f.xaxis.axis_label = "vineyard rows"
+            f.yaxis.axis_label = "%" + c.upper()
+            save(f)
+
 
 
 def chart_estimates_comparison(folder, id, steps=[], useperc=True):
@@ -4305,7 +4551,25 @@ if __name__ == "__main__":
     outputinfotext(paths, maindir+"/comparisons") #write all the directory infos to a single file
     compare_rmse_couples(paths, maindir+"/comparisons")
     '''
+
+    # Compare colorgrade RMSE for each couple and output a text file with directory infos and camparison charts
+
+    '''
+    maindir = "/vagrant/code/pysdss/data/output/text/analysys2206"
+    #dirs = os.listdir("/vagrant/code/pysdss/data/output/text/analysys2206")
+    dirs = [d for d in os.listdir(maindir) if os.path.isdir(os.path.join(maindir, d)) and d != "comparisons" and d != "comparisons_colors"]
+    paths = [ maindir + "/" + dir + "/" for dir in dirs]
+    if not os.path.exists(maindir+"/comparisons_colors"): os.mkdir(maindir+"/comparisons_colors")
+    outputinfotext(paths, maindir+"/comparisons_colors") #write all the directory infos to a single file
+
+    colors=["a","b","c","d"]
+    for c in colors:
+        compare_rmse_couples(paths, maindir+"/comparisons_colors",colorgrade=c)
+    '''
+
     ################################################################
+
+
 
 
     ######### OUTPUT 32 combinations  (8*4) ############################################
@@ -4362,6 +4626,7 @@ if __name__ == "__main__":
                 print("make charts")
                 chart_rmse(folder, id)
                 chart_estimated_berries(folder, id, steps=steps, useperc=True)
+                chart_estimated_colors(folder, id, steps=steps, colorgrades=grades, useperc=True)
                 chart_estimates_comparison(folder, id, steps=steps, useperc=True)
                 chart_visible_berries(folder, id, steps=steps, useperc=True)
                 chart_colorgrades(folder, id, grades, steps, useperc=True)
@@ -4422,6 +4687,7 @@ if __name__ == "__main__":
                 print("make charts")
                 chart_rmse(folder, id)
                 chart_estimated_berries(folder, id, steps=steps, useperc=True)
+                chart_estimated_colors(folder, id, steps=steps, colorgrades=grades, useperc=True)
                 chart_estimates_comparison(folder, id, steps=steps, useperc=True)
                 chart_visible_berries(folder, id, steps=steps, useperc=True)
                 chart_colorgrades(folder, id, grades, steps, useperc=True)
@@ -4434,7 +4700,6 @@ if __name__ == "__main__":
     chartpath = "/vagrant/code/pysdss/data/output/text/analysys2206/comparisons/charts"
     if not os.path.exists(chartpath + "/docs"): os.mkdir(chartpath + "/docs")
 
-    #publish_rsme_comparisons(chartpath,chartpath + "/docs", "avg",["movingFFF", "moving"])
     ################################################
 
     ##check moving average
@@ -4456,7 +4721,6 @@ if __name__ == "__main__":
     publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["ordinaryFFF", "ordinary"])
     publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["ordinaryTT", "ordinaryFT"])
     '''
-
     '''
     ## check simple kriging
     publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["simpleFFF", "simple"])
@@ -4501,6 +4765,90 @@ if __name__ == "__main__":
     outpath =  rootdir +  "/comparisons/charts/docs/"
     export_estimated_berries_tables(rootdir, dirs, outpath)
     '''
+
+
+    ##############  publish docs files with the rsme comparisons images in tables for color grades
+    chartpath = "/vagrant/code/pysdss/data/output/text/analysys2206/comparisons_colors/charts"
+    if not os.path.exists(chartpath + "/docs"): os.mkdir(chartpath + "/docs")
+
+    ##check moving average
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["movingFFF", "moving"])
+    #######publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["movingTT", "movingFT"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["movingFF", "movingFT"])
+
+    ##check inverse distance
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["inverseFFF", "inverse"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["inverseTT", "inverseFT"])
+
+
+    ##check ordinary kriging
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["ordinaryFFF", "ordinary"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["ordinaryTT", "ordinaryFT"])
+    #publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["ordinaryFF", "ordinaryFT"])
+
+    ## check simple kriging
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["simpleFFF", "simple"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["simpleTT", "simpleFT"])
+    #publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["simpleFF", "simpleFT"])
+
+
+
+    ## from the above i found that ordered filter restricted to same row gives better results but also ordered with free
+    # filtrer can give better results
+    ## now i can compare ordered/same row for the 4 interpolation methods (10 comparisons * 2) and then ordered/same row
+    '''
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["movingFT", "movingFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["movingFT", "inverseFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["movingFT", "ordinaryFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["movingFT", "simpleFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["inverseFT", "inverseFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["inverseFT", "ordinaryFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["inverseFT", "simpleFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["ordinaryFT", "simpleFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["ordinaryFT", "ordinaryFT"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["simpleFT", "simpleFT"])
+    '''
+    '''
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["movingFF", "movingFF"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["movingFF", "inverseFF"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["movingFF", "ordinaryFF"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["movingFF", "simpleFF"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["inverseFF", "inverseFF"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["inverseFF", "ordinaryFF"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["inverseFF", "simpleFF"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["ordinaryFF", "simpleFF"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["ordinaryFF", "ordinaryFF"])
+    publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["simpleFF", "simpleFF"])      
+    '''
+
+    ## i still need to export the comparison charts! i do only for the ordered/only rows
+
+    ''''
+    rootdir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
+    dirs=["a066f6d0e9a0d49d2999c3714c5f9ed34","a923f00d5dbdc4d988b128377c92dc19a","a97304dec81854237a9cd9523e28daf52",
+    "aff8a205a38f34bb3bc2cd177bed15dc4"]
+    paths = [rootdir+d+"/" for d in dirs]
+    for i,folder in enumerate(paths):
+        chart_estimated_colors(folder, dirs[i], steps=[2,3,4,5,6,7,8,9,10,20,30,50,100], colorgrades=["a", "b", "c", "d"], useperc=True)
+
+    dirs = ["a1a126f124b7e4f5e99d4ddc553f71725", "a37809e20381e49778efa56222f9bcbce",
+    "a3f8537dee1324c088bdc84562c6c4f0c","aa2de2f54ca16491fa46e52eb9c2b3717"]
+    paths = [rootdir+d+"/" for d in dirs]
+    for i,folder in enumerate(paths):
+        chart_estimated_colors(folder, dirs[i], steps=[5,6,7,8,9,10,20,30,50,100], colorgrades=["a", "b", "c", "d"], useperc=True)
+    '''
+
+
+    #esporting esrimated colorgrades tables for interpolations found after the analysis of the above rmse
+    rootdir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
+    dirs=["a066f6d0e9a0d49d2999c3714c5f9ed34","a1a126f124b7e4f5e99d4ddc553f71725","a37809e20381e49778efa56222f9bcbce",
+    "a3f8537dee1324c088bdc84562c6c4f0c","a923f00d5dbdc4d988b128377c92dc19a","a97304dec81854237a9cd9523e28daf52",
+    "aa2de2f54ca16491fa46e52eb9c2b3717","aff8a205a38f34bb3bc2cd177bed15dc4"]   
+    outpath =  rootdir +  "/comparisons_colors/charts/docs/"
+    export_estimated_colors_tables(rootdir, dirs, outpath)
+
+
+
     ###################################################################
     ############################  TESTS ###############################
     ###################################################################
@@ -4705,3 +5053,23 @@ if __name__ == "__main__":
         document.save(outdir+'/test.docx')
 
     #export_word_test("/vagrant/code/pysdss/data/output/text","/vagrant/code/pysdss/data/output/text/analysys2206/comparisons/charts/delta_avg_rmse_comparison0_simpleTFT_movingTFF.png"  )
+
+
+    def estimate_colors_byrow_test():
+
+        id = "a80749789a6134142a654caa0090d7a8f"
+
+        maindir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
+        folder =  maindir + id + "/"
+        dirs = [d for d in os.listdir(maindir) if os.path.isdir(os.path.join(maindir, d)) and d != "comparisons" and d != "comparisons_colors"]
+        paths = [maindir + "/" + dir + "/" for dir in dirs]
+        #print(paths)
+        for d in dirs:
+            folder = maindir + d + "/"
+            print(folder)
+            info = utils.json_io(folder + "/info.json", direction="in")
+            estimate_colors_byrow(folder, d, steps = info["steps"], colorgrades = info["colorgrades"])
+            calculate_rmse_color(folder, d, steps=info["steps"], colorgrades=info["colorgrades"])
+            chart_rmse_color(folder, d, colorgrades=info["colorgrades"], useperc=True)
+    #estimate_colors_byrow_test()
+
