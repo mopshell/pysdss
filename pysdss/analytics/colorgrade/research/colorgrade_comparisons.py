@@ -1555,7 +1555,7 @@ def berrycolor_workflow_1(steps=[2, 3, 4], interp="invdist", random_filter=False
 
             # filter data by step
             k, d = filter.filter_bystep(keep, step=step, rand=random_filter, first_last=first_last,rowname="row")
-            # if random_filter we will set the radius to the max distance between points in a row
+            # if random_filter we will set the radius to the max distance between points along the rows
             if random_filter: max_point_distance = utils.max_point_distance(k, "lon", "lat", "row", direction=rowdirection)
 
             '''
@@ -4367,6 +4367,45 @@ def chart_colorgrades(folder,id, colors=[], steps=[], useperc=True):
             f.add_layout(citation)
             save(f)
 
+def export_estimates_percentages(id,folder, steps = []):
+    """
+    Open the _count_stats_byrow.csv file and calculate the difference of estimated berries at each step as percentage
+    the last row has the average difference in percentage
+    output "_count_difference%.csv"
+    :param id:
+    :param folder:
+    :param steps:
+    :return:
+    """
+
+    cols = ["row", "estimated_berries_original"]
+    [cols.append("step"+str(s)+"_estimated_berries") for s in steps]
+    [cols.append("step" + str(s) + "_delta_estimates") for s in steps]
+    #print(cols)
+
+    path = folder + id + "_count_stats_byrow.csv"
+    df = pd.read_csv(path, usecols=cols)
+
+    #recalculate the deltas with negative
+    for s in steps:
+        df["step"+str(s)+"_delta_estimates"] = df["step"+str(s)+"_estimated_berries"] - df["estimated_berries_original"]
+
+    out = np.zeros((df.shape[0]+1, len(steps) + 2))
+
+    out[:-1,0] = df["row"].values
+    out[:-1,1] = df["estimated_berries_original"]
+
+    for i,s in enumerate(steps):
+        out[:-1, i+2] = df["step"+str(s)+"_delta_estimates"]*100/df["estimated_berries_original"]
+        out[-1,i+2] = np.mean(out[:-1, i+2]) #this is the last row with the averages
+
+    header = "ROW,EXPECTED"
+    for s in steps:
+        header+=","+str(int(100/s)) + "%"
+    #print(header)
+
+    np.savetxt(folder + id + "_count_difference%.csv", out, fmt='%.3f', delimiter=',', newline='\n', header=header, footer='',
+           comments='')
 
 if __name__ == "__main__":
     pass
@@ -4708,11 +4747,21 @@ if __name__ == "__main__":
     #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["movingTT", "movingFT"])
     #publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["movingTT", "movingFT"])
 
+
     ##check inverse distance
     #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["inverseFFF", "inverse"])
     #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["inverseTT", "inverseFT"])
     #publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["inverseFFF", "inverse"])
     #publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["inverseTT", "inverseFT"])
+
+
+    ###140717 additional comparisons  end of section 1.7.1
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["inverseFT", "inverseFF"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["inverseFT", "inverseFF"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["movingFT", "inverseFF"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["movingFT", "inverseFF"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["inverseTF", "inverseFF"])
+    #publish_rsme_comparisons(chartpath,chartpath + "/docs","estimates", ["inverseTF", "inverseFF"])
 
     '''
     ##check ordinary kriging
@@ -4757,19 +4806,20 @@ if __name__ == "__main__":
     publish_rsme_comparisons(chartpath, chartpath + "/docs", "estimates", ["simpleFT", "simpleFT"])
     '''
 
-    '''eporting estimated berries tables for interpolations found after the analysis of the above rmse
+    #eporting estimated berries tables for interpolations found after the analysis of the above rmse
     rootdir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
-    dirs=["a066f6d0e9a0d49d2999c3714c5f9ed34","a1a126f124b7e4f5e99d4ddc553f71725","a37809e20381e49778efa56222f9bcbce",
-    "a3f8537dee1324c088bdc84562c6c4f0c","a923f00d5dbdc4d988b128377c92dc19a","a97304dec81854237a9cd9523e28daf52",
-    "aa2de2f54ca16491fa46e52eb9c2b3717","aff8a205a38f34bb3bc2cd177bed15dc4"]
-    outpath =  rootdir +  "/comparisons/charts/docs/"
-    export_estimated_berries_tables(rootdir, dirs, outpath)
-    '''
+    #dirs=["a066f6d0e9a0d49d2999c3714c5f9ed34","a1a126f124b7e4f5e99d4ddc553f71725","a37809e20381e49778efa56222f9bcbce",
+    #"a3f8537dee1324c088bdc84562c6c4f0c","a923f00d5dbdc4d988b128377c92dc19a","a97304dec81854237a9cd9523e28daf52",
+    #"aa2de2f54ca16491fa46e52eb9c2b3717","aff8a205a38f34bb3bc2cd177bed15dc4"]
+    #dirs=["ab0d16e6152d94383bdf5c6dba3a45dea","ac5eaa885603f4d83ad939623bae6d116"]
+    #outpath =  rootdir +  "/comparisons/charts/docs/"
+    #export_estimated_berries_tables(rootdir, dirs, outpath)
+
 
 
     ##############  publish docs files with the rsme comparisons images in tables for color grades
-    chartpath = "/vagrant/code/pysdss/data/output/text/analysys2206/comparisons_colors/charts"
-    if not os.path.exists(chartpath + "/docs"): os.mkdir(chartpath + "/docs")
+    #chartpath = "/vagrant/code/pysdss/data/output/text/analysys2206/comparisons_colors/charts"
+    #if not os.path.exists(chartpath + "/docs"): os.mkdir(chartpath + "/docs")
 
     ##check moving average
     #publish_rsme_comparisons(chartpath,chartpath + "/docs","avg", ["movingFFF", "moving"])
@@ -4840,12 +4890,12 @@ if __name__ == "__main__":
 
 
     #esporting esrimated colorgrades tables for interpolations found after the analysis of the above rmse
-    rootdir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
-    dirs=["a066f6d0e9a0d49d2999c3714c5f9ed34","a1a126f124b7e4f5e99d4ddc553f71725","a37809e20381e49778efa56222f9bcbce",
-    "a3f8537dee1324c088bdc84562c6c4f0c","a923f00d5dbdc4d988b128377c92dc19a","a97304dec81854237a9cd9523e28daf52",
-    "aa2de2f54ca16491fa46e52eb9c2b3717","aff8a205a38f34bb3bc2cd177bed15dc4"]   
-    outpath =  rootdir +  "/comparisons_colors/charts/docs/"
-    export_estimated_colors_tables(rootdir, dirs, outpath)
+    #rootdir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
+    #dirs=["a066f6d0e9a0d49d2999c3714c5f9ed34","a1a126f124b7e4f5e99d4ddc553f71725","a37809e20381e49778efa56222f9bcbce",
+    #"a3f8537dee1324c088bdc84562c6c4f0c","a923f00d5dbdc4d988b128377c92dc19a","a97304dec81854237a9cd9523e28daf52",
+    #"aa2de2f54ca16491fa46e52eb9c2b3717","aff8a205a38f34bb3bc2cd177bed15dc4"]
+    #outpath =  rootdir +  "/comparisons_colors/charts/docs/"
+    #export_estimated_colors_tables(rootdir, dirs, outpath)
 
 
 
@@ -5073,3 +5123,33 @@ if __name__ == "__main__":
             chart_rmse_color(folder, d, colorgrades=info["colorgrades"], useperc=True)
     #estimate_colors_byrow_test()
 
+
+
+    ########################################
+
+
+    #ordered, byrows
+    '''ids = ["a923f00d5dbdc4d988b128377c92dc19a","aff8a205a38f34bb3bc2cd177bed15dc4",
+           "a97304dec81854237a9cd9523e28daf52","a066f6d0e9a0d49d2999c3714c5f9ed34"]
+    maindir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
+    for id in ids:
+        print(id)
+        folder = maindir + id + "/"
+        export_estimates_percentages(id,folder, steps = [2,3,4,5,6,7,8,9,10,20,30,50,100])'''
+
+    #ordered, free
+    '''ids = ["a2f718fbced16402a8774b750da18052c","a80749789a6134142a654caa0090d7a8f",
+           "ab0d16e6152d94383bdf5c6dba3a45dea","ac5eaa885603f4d83ad939623bae6d116"]
+    maindir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
+    for id in ids:
+        print(id)
+        folder = maindir + id + "/"
+        export_estimates_percentages(id,folder, steps = [2,3,4,5,6,7,8,9,10,20,30,50,100])'''
+    '''
+    ids = ["ab0d16e6152d94383bdf5c6dba3a45dea", "ac5eaa885603f4d83ad939623bae6d116"]
+    maindir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
+    for id in ids:
+        print(id)
+        folder = maindir + id + "/"
+        export_estimates_percentages(id,folder, steps = [2,3,4,5,6,7,8,9,10,20,30,50,100])
+    '''
