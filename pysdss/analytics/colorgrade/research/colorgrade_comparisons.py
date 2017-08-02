@@ -4662,11 +4662,125 @@ if __name__ == "__main__":
     ################################################################
 
 
-
-
     ######### OUTPUT 32 combinations  (8*4) ############################################
 
+    def analysis_32combinations():
 
+        ###run interpolation for all the combinations and output the charts
+        # change the hardcoded variables before running
+
+        # random_filter -> True for random filtering
+        # force_interpolation_by_row -> True to force interpolation by vineyard row
+        # first_last -> True to take the first and last point of a vineyard row
+
+
+
+        ################### AVERAGE     ---- INVDIST #####################
+
+        interp = ["average", "invdist"]
+        # interp = ["invdist"]
+        grades = ['a', 'b', 'c', 'd']
+        steps = [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
+        # random_filter,force_interpolation_by_row, first_last
+        combinations = [
+            # [False, False, False],
+            # [False, False, True],
+            # [False, True, False],
+            # [False, True, True],
+            # [True, False, False], ##########error? step100
+            # [True, False, True],
+            # [True, True, False],#####error? step100
+            # [True, True, True]
+        ]
+
+        for i in interp:
+            for c in combinations:
+
+                # original worflow with ordered filter and overlapping interpolation
+                id, stats = berrycolor_workflow_1(steps=steps, interp=i, random_filter=c[0],
+                                                  force_interpolation_by_row=c[1], first_last=c[2])
+                folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+                fileIO.save_object(folder + id + "_statistics", stats)
+                test_interpret_result(stats, id, folder)
+                point = folder + id + "_keep.csv"
+
+                if c[1]:
+                    test_compare_raster_totruth_byrow(point, id, folder, steps=steps, clean=[[-1], [0]])
+                else:
+                    test_compare_raster_totruth(point, id, folder, steps=steps, clean=[[-1], [0]])
+
+                print("calculate rmse")
+                calculate_rmse_row(folder, id, steps=steps)
+                estimate_berries_byrow(folder, id, steps=steps)
+                calculate_rmse(folder, id, steps=steps)
+                print("make charts")
+                chart_rmse(folder, id)
+                chart_estimated_berries(folder, id, steps=steps, useperc=True)
+                chart_estimated_colors(folder, id, steps=steps, colorgrades=grades, useperc=True)
+                chart_estimates_comparison(folder, id, steps=steps, useperc=True)
+                chart_visible_berries(folder, id, steps=steps, useperc=True)
+                chart_colorgrades(folder, id, grades, steps, useperc=True)
+
+        ############   kriging ------------- ########################
+
+        # interp = ["ordinary", "simple"]
+        interp = ["ordinary"]
+        # interp = ["simple"]
+        grades = ['a', 'b', 'c', 'd']
+        # steps = [5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
+        steps = [50]
+        counts = ["visible"]
+        variogram = "global"
+        # random_filter,force_interpolation_by_row, first_last
+        combinations = [
+            # [False, False, False],
+            # [False, False, True],
+            # [False, True, False],
+            # [False, True, True],
+            [True, False, False],  # taking too much time?
+            # [True, False, True], #taking too much time?
+            # [True, True, False],
+            # [True, True, True]
+        ]
+
+        for i in interp:
+            for c in combinations:
+
+                id, stats = berrycolor_workflow_kriging(steps=steps, counts=counts, interp=i, random_filter=c[0],
+                                                        force_interpolation_by_row=c[1], first_last=c[2],
+                                                        variogram=variogram,
+                                                        rowdirection="x", epsg="32611")
+
+                # id ="a76b7da4d98084ac5863db7adc77eb957"
+
+                folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
+                fileIO.save_object(folder + id + "_statistics_" + i, stats)
+
+                colmodel = ["avg", "std", "area", "nozero_area", "zero_area", "visible_count",
+                            "visible_avg", "visible_std"]
+
+                # stats = fileIO.load_object(folder + id + "_statistics_" + i)
+                test_interpret_result(stats, id, folder, colmodel)
+
+                point = folder + id + "_keep.csv"
+                if c[1]:
+                    test_compare_raster_totruth_byrow(point, id, folder, steps=steps, clean=[[-1], [0]], counts=counts,
+                                                      suffix="_" + i + variogram)
+                else:
+                    test_compare_raster_totruth(point, id, folder, steps=steps, clean=[[-1], [0]], counts=counts,
+                                                suffix="_" + i + variogram)
+
+                print("calculate rmse")
+                calculate_rmse_row(folder, id, steps=steps)
+                estimate_berries_byrow(folder, id, steps=steps)
+                calculate_rmse(folder, id, steps=steps)
+                print("make charts")
+                chart_rmse(folder, id)
+                chart_estimated_berries(folder, id, steps=steps, useperc=True)
+                chart_estimated_colors(folder, id, steps=steps, colorgrades=grades, useperc=True)
+                chart_estimates_comparison(folder, id, steps=steps, useperc=True)
+                chart_visible_berries(folder, id, steps=steps, useperc=True)
+                chart_colorgrades(folder, id, grades, steps, useperc=True)
 
     # analysis_32combinations()
 
