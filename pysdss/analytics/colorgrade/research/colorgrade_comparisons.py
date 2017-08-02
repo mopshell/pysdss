@@ -4407,6 +4407,59 @@ def export_estimates_percentages(id,folder, steps = []):
     np.savetxt(folder + id + "_count_difference%.csv", out, fmt='%.3f', delimiter=',', newline='\n', header=header, footer='',
            comments='')
 
+
+def export_estimates_percentages_color(id,folder, steps = [], color=""):
+    """
+    Open the _count_stats_byrow.csv file and _color_stats_byrow.csv and calculate the difference of estimated color percentage at each step
+    the last row has the average difference in percentage
+    output "_color_difference%_[color].csv"
+    :param id:
+    :param folder:
+    :param steps:
+    :param color: color grade, can be "a", "b", "c", "d"
+    :return:
+    """
+
+    #fist we get the extimates berries for each row
+    cols = ["row", "estimated_berries_original"]
+    path = folder + id + "_count_stats_byrow.csv"
+    df0 = pd.read_csv(path, usecols=cols)
+
+    #[cols.append("step"+str(s)+"_estimated_berries") for s in steps]
+    #[cols.append("step" + str(s) + "_delta_estimates") for s in steps]
+
+    #print(cols)
+
+    #then we get the estimated percentage and the percentages at different steps
+    cols = []
+    cols.append(color+"_avg")
+    [cols.append("step"+str(s)+"_"+color+"_avg") for s in steps]
+    [cols.append("step" + str(s) + "_"+color+"_delta_avg") for s in steps]
+    path = folder + id + "_color_stats_byrow.csv"
+    df = pd.read_csv(path, usecols=cols)
+
+    #recalculate the deltas with negative
+    for s in steps:
+        df["step" + str(s) + "_"+color+"_delta_avg"] = df["step"+str(s)+"_"+color+"_avg"] - df[color+"_avg"]
+
+    out = np.zeros((df.shape[0]+1, len(steps) + 3))
+
+    out[:-1,0] = df0["row"].values
+    out[:-1,1] = df0["estimated_berries_original"]
+    out[:-1,2] = df0["estimated_berries_original"] * df[color+"_avg"]  #calculate expected for that color grade
+
+    for i,s in enumerate(steps):
+        out[:-1, i+3] = df["step" + str(s) + "_"+color+"_delta_avg"]
+        out[-1,i+3] = np.mean(out[:-1, i+3]) #this is the last row with the averages
+
+    header = "ROW,EXPECTED TOTAL, EXPECTED COLOUR"+color.upper()
+    for s in steps:
+        header+=","+str(int(100/s)) + "%"
+    #print(header)
+
+    np.savetxt(folder + id + "_color_difference%_"+color+".csv", out, fmt='%.3f', delimiter=',', newline='\n', header=header, footer='',
+           comments='')
+
 if __name__ == "__main__":
     pass
 
@@ -4613,131 +4666,14 @@ if __name__ == "__main__":
 
     ######### OUTPUT 32 combinations  (8*4) ############################################
 
-    def analysis_32combinations():
-
-        ###run interpolation for all the combinations and output the charts
-        # change the hardcoded variables before running
-
-        #random_filter -> True for random filtering
-        #force_interpolation_by_row -> True to force interpolation by vineyard row
-        #first_last -> True to take the first and last point of a vineyard row
-
-
-
-        ################### AVERAGE     ---- INVDIST #####################
-
-        interp = ["average", "invdist"]
-        #interp = ["invdist"]
-        grades = ['a', 'b', 'c', 'd']
-        steps = [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
-        # random_filter,force_interpolation_by_row, first_last
-        combinations = [
-            # [False, False, False],
-            # [False, False, True],
-            # [False, True, False],
-            # [False, True, True],
-            # [True, False, False], ##########error? step100
-            # [True, False, True],
-            # [True, True, False],#####error? step100
-            # [True, True, True]
-        ]
-
-        for i in interp:
-            for c in combinations:
-
-                # original worflow with ordered filter and overlapping interpolation
-                id, stats = berrycolor_workflow_1(steps=steps, interp=i, random_filter=c[0],
-                                                  force_interpolation_by_row=c[1], first_last=c[2])
-                folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
-                fileIO.save_object(folder + id + "_statistics", stats)
-                test_interpret_result(stats, id, folder)
-                point = folder + id + "_keep.csv"
-
-                if c[1]:
-                    test_compare_raster_totruth_byrow(point, id, folder, steps=steps, clean=[[-1], [0]])
-                else:
-                    test_compare_raster_totruth(point, id, folder, steps=steps, clean=[[-1], [0]])
-
-                print("calculate rmse")
-                calculate_rmse_row(folder, id, steps=steps)
-                estimate_berries_byrow(folder, id, steps=steps)
-                calculate_rmse(folder, id, steps=steps)
-                print("make charts")
-                chart_rmse(folder, id)
-                chart_estimated_berries(folder, id, steps=steps, useperc=True)
-                chart_estimated_colors(folder, id, steps=steps, colorgrades=grades, useperc=True)
-                chart_estimates_comparison(folder, id, steps=steps, useperc=True)
-                chart_visible_berries(folder, id, steps=steps, useperc=True)
-                chart_colorgrades(folder, id, grades, steps, useperc=True)
-
-        ############   kriging ------------- ########################
-
-        # interp = ["ordinary", "simple"]
-        interp = ["ordinary"]
-        # interp = ["simple"]
-        grades = ['a', 'b', 'c', 'd']
-        # steps = [5, 6, 7, 8, 9, 10, 20, 30, 50, 100]
-        steps = [50]
-        counts = ["visible"]
-        variogram = "global"
-        # random_filter,force_interpolation_by_row, first_last
-        combinations = [
-            # [False, False, False],
-            # [False, False, True],
-            # [False, True, False],
-            # [False, True, True],
-            [True, False, False],  # taking too much time?
-            # [True, False, True], #taking too much time?
-            # [True, True, False],
-            # [True, True, True]
-        ]
-
-        for i in interp:
-            for c in combinations:
-
-                id, stats = berrycolor_workflow_kriging(steps=steps, counts=counts, interp=i, random_filter=c[0],
-                                                        force_interpolation_by_row=c[1], first_last=c[2],
-                                                        variogram=variogram,
-                                                        rowdirection="x", epsg="32611")
-
-                # id ="a76b7da4d98084ac5863db7adc77eb957"
-
-                folder = "/vagrant/code/pysdss/data/output/text/" + id + "/"
-                fileIO.save_object(folder + id + "_statistics_" + i, stats)
-
-                colmodel = ["avg", "std", "area", "nozero_area", "zero_area", "visible_count",
-                            "visible_avg", "visible_std"]
-
-                # stats = fileIO.load_object(folder + id + "_statistics_" + i)
-                test_interpret_result(stats, id, folder, colmodel)
-
-                point = folder + id + "_keep.csv"
-                if c[1]:
-                    test_compare_raster_totruth_byrow(point, id, folder, steps=steps, clean=[[-1], [0]], counts=counts,
-                                                      suffix="_" + i + variogram)
-                else:
-                    test_compare_raster_totruth(point, id, folder, steps=steps, clean=[[-1], [0]], counts=counts,
-                                                suffix="_" + i + variogram)
-
-                print("calculate rmse")
-                calculate_rmse_row(folder, id, steps=steps)
-                estimate_berries_byrow(folder, id, steps=steps)
-                calculate_rmse(folder, id, steps=steps)
-                print("make charts")
-                chart_rmse(folder, id)
-                chart_estimated_berries(folder, id, steps=steps, useperc=True)
-                chart_estimated_colors(folder, id, steps=steps, colorgrades=grades, useperc=True)
-                chart_estimates_comparison(folder, id, steps=steps, useperc=True)
-                chart_visible_berries(folder, id, steps=steps, useperc=True)
-                chart_colorgrades(folder, id, grades, steps, useperc=True)
 
 
     # analysis_32combinations()
 
 
     ##############  publish docs files with the rsme comparisons images in tables
-    chartpath = "/vagrant/code/pysdss/data/output/text/analysys2206/comparisons/charts"
-    if not os.path.exists(chartpath + "/docs"): os.mkdir(chartpath + "/docs")
+    #chartpath = "/vagrant/code/pysdss/data/output/text/analysys2206/comparisons/charts"
+    #if not os.path.exists(chartpath + "/docs"): os.mkdir(chartpath + "/docs")
 
     ################################################
 
@@ -4807,7 +4743,7 @@ if __name__ == "__main__":
     '''
 
     #eporting estimated berries tables for interpolations found after the analysis of the above rmse
-    rootdir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
+    #rootdir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
     #dirs=["a066f6d0e9a0d49d2999c3714c5f9ed34","a1a126f124b7e4f5e99d4ddc553f71725","a37809e20381e49778efa56222f9bcbce",
     #"a3f8537dee1324c088bdc84562c6c4f0c","a923f00d5dbdc4d988b128377c92dc19a","a97304dec81854237a9cd9523e28daf52",
     #"aa2de2f54ca16491fa46e52eb9c2b3717","aff8a205a38f34bb3bc2cd177bed15dc4"]
@@ -4871,31 +4807,37 @@ if __name__ == "__main__":
     publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["simpleFF", "simpleFF"])      
     '''
 
+    #01/08/17 final check to get the "best" method
+    #publish_rsme_comparisons(chartpath, chartpath + "/docs", "avg", ["movingFT", "inverseFF"])
+
     ## i still need to export the comparison charts! i do only for the ordered/only rows
 
-    ''''
-    rootdir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
-    dirs=["a066f6d0e9a0d49d2999c3714c5f9ed34","a923f00d5dbdc4d988b128377c92dc19a","a97304dec81854237a9cd9523e28daf52",
-    "aff8a205a38f34bb3bc2cd177bed15dc4"]
-    paths = [rootdir+d+"/" for d in dirs]
-    for i,folder in enumerate(paths):
-        chart_estimated_colors(folder, dirs[i], steps=[2,3,4,5,6,7,8,9,10,20,30,50,100], colorgrades=["a", "b", "c", "d"], useperc=True)
 
-    dirs = ["a1a126f124b7e4f5e99d4ddc553f71725", "a37809e20381e49778efa56222f9bcbce",
-    "a3f8537dee1324c088bdc84562c6c4f0c","aa2de2f54ca16491fa46e52eb9c2b3717"]
-    paths = [rootdir+d+"/" for d in dirs]
-    for i,folder in enumerate(paths):
-        chart_estimated_colors(folder, dirs[i], steps=[5,6,7,8,9,10,20,30,50,100], colorgrades=["a", "b", "c", "d"], useperc=True)
-    '''
+    #rootdir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
+    #dirs=["a066f6d0e9a0d49d2999c3714c5f9ed34","a923f00d5dbdc4d988b128377c92dc19a","a97304dec81854237a9cd9523e28daf52",
+    #"aff8a205a38f34bb3bc2cd177bed15dc4"]
+    #dirs=["ab0d16e6152d94383bdf5c6dba3a45dea", "ac5eaa885603f4d83ad939623bae6d116"]
+    #paths = [rootdir+d+"/" for d in dirs]
+    #for i,folder in enumerate(paths):
+    #    chart_estimated_colors(folder, dirs[i], steps=[2,3,4,5,6,7,8,9,10,20,30,50,100], colorgrades=["a", "b", "c", "d"], useperc=True)
 
+    #dirs = ["a1a126f124b7e4f5e99d4ddc553f71725", "a37809e20381e49778efa56222f9bcbce",
+    #"a3f8537dee1324c088bdc84562c6c4f0c","aa2de2f54ca16491fa46e52eb9c2b3717"]
+    #paths = [rootdir+d+"/" for d in dirs]
+    #for i,folder in enumerate(paths):
+    #    chart_estimated_colors(folder, dirs[i], steps=[5,6,7,8,9,10,20,30,50,100], colorgrades=["a", "b", "c", "d"], useperc=True)
 
     #esporting esrimated colorgrades tables for interpolations found after the analysis of the above rmse
     #rootdir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
     #dirs=["a066f6d0e9a0d49d2999c3714c5f9ed34","a1a126f124b7e4f5e99d4ddc553f71725","a37809e20381e49778efa56222f9bcbce",
     #"a3f8537dee1324c088bdc84562c6c4f0c","a923f00d5dbdc4d988b128377c92dc19a","a97304dec81854237a9cd9523e28daf52",
     #"aa2de2f54ca16491fa46e52eb9c2b3717","aff8a205a38f34bb3bc2cd177bed15dc4"]
+
     #outpath =  rootdir +  "/comparisons_colors/charts/docs/"
     #export_estimated_colors_tables(rootdir, dirs, outpath)
+
+
+
 
 
 
@@ -5127,7 +5069,7 @@ if __name__ == "__main__":
 
     ########################################
 
-
+    #output the tables for the thesis discussion
     #ordered, byrows
     '''ids = ["a923f00d5dbdc4d988b128377c92dc19a","aff8a205a38f34bb3bc2cd177bed15dc4",
            "a97304dec81854237a9cd9523e28daf52","a066f6d0e9a0d49d2999c3714c5f9ed34"]
@@ -5152,4 +5094,14 @@ if __name__ == "__main__":
         print(id)
         folder = maindir + id + "/"
         export_estimates_percentages(id,folder, steps = [2,3,4,5,6,7,8,9,10,20,30,50,100])
+    '''
+    '''
+    ids = ["ab0d16e6152d94383bdf5c6dba3a45dea", "ac5eaa885603f4d83ad939623bae6d116"]
+    maindir = "/vagrant/code/pysdss/data/output/text/analysys2206/"
+    for id in ids:
+        print(id)
+        folder = maindir + id + "/"
+        for c in ["a","b","c","d"]:
+            print(c)
+            export_estimates_percentages_color(id,folder, steps = [2,3,4,5,6,7,8,9,10,20,30,50,100], color=c)
     '''
