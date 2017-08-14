@@ -28,6 +28,9 @@ import pandas as pd
 
 import pysdss.utils as utils
 
+from pysdss.database import default_connection
+from pysdss.database import pgconnect
+#default_connection = {"dbname": "grapes", "user": "claudio", "password": "claudio", "port":"5432", "host": "127.0.0.1"}
 
 # class dataToPostgres():
 #   raise NotImplemented
@@ -39,24 +42,6 @@ geomessages = Enum ("geomessages", "starting running stopped error completed una
 # enumeration for geoprocessing types
 geotypes = Enum ("geotypes", "statistics filter_bystd filter_byvalue filter_bystep kriging interpolation")
 
-default_connection = {"dbname": "grapes", "user": "claudio", "password": "claudio", "port":"5432", "host": "127.0.0.1"}
-
-
-def pgconnect(**kwargs):
-    """ Connect to a postgresql database
-    call as pgconnect(**kwargs) where kwargs  is something like
-    {"dbname": "grapes", "user": "claudio", "password": "xxx", "port":"5432", "host": "127.0.0.1"}
-    :param **kwargs :   a dictionary with connection
-    :return: postgresql connection
-    """
-
-    # http: // stackoverflow.com / questions / 17443379 / psql - fatal - peer - authentication - failed -for -user - dev
-    #connstring = "dbname="+dbname +" user="+user +" password="+password+ " host="+host
-    connstring = ""
-    for i in kwargs:connstring += str(i) +"="+ kwargs[i]+ " "
-    #print(connstring)
-    conn = psycopg2.connect(connstring)
-    return conn
 
 def csvToPostgres(conndict, stypeid, filename, columns, proj=4326, debug=True):
     # TODO check the columns parameter for the mapping, the user should be shown a form to couple csv columns with database columns
