@@ -32,10 +32,11 @@
 #                   -   Format a gdal vrt xml file and save it to disk
 #                   -   Assign row number to ordered field points
 #                   -   Reclassify a raster given a threshold
+#                   -   Get the EPSG UTM WGS84 code given the latitude and longitude
 #
 # Author:      Claudio Piccinini, some functions based on Chris Garrard code
 #
-# Created:     13/03/2015, updated april 2017
+# Created:     13/03/2015, updated august 2017
 # -------------------------------------------------------------------------------
 
 import sys
@@ -848,6 +849,8 @@ def read_point_pixel_coords(shp_filename, raster_filename):
         ds = ogr.Open(shp_filename)
         lyr = ds.GetLayer()
 
+
+        #print(raster_filename)
         src_ds = gdal.Open(raster_filename)
         gt = src_ds.GetGeoTransform()
         rb = src_ds.GetRasterBand(1)
@@ -924,6 +927,8 @@ def compare_csvpoint_cell(point, raster, vrtdict, overwrite=True, **kwargs):
         else:
             if not os.path.exists(folder + "/" + name + ".shp"):
                 save_vector(in_ds, folder + "/" + name + ".shp", "ESRI Shapefile")
+
+        #print(folder + "/" + name + ".shp")
 
         #query the raster with the points
         print("Querying raster, this may take a while depending on the number of points")
@@ -1210,6 +1215,20 @@ def sieve_raster(infile, threshold, connectedness=4, outfile=None, mask=None, fr
         if mask_ds: mask_ds = None
 
 
+def get_wgs84_utm(lat,lon):
+    """
+    Return the WGS84 UTM EPSG code for a given wgs84 latitude/longitude
+    see book "Postgis in Action Second Edition , p.74"
+    :param lat:
+    :param lon:
+    :return:
+    """
+    if lat > 0:
+        return 32600 + (math.floor((lon + 180) / 6) + 1)
+    else:
+        return 32700 + (math.floor((lon + 180) / 6) + 1)
+
+
 if __name__ == "__main__":
 
 
@@ -1336,7 +1355,7 @@ if __name__ == "__main__":
         outputfile = path + output
 
         reclassify_raster(inputfile, outputfile, operator, threshold, silence=False)
-    test_reclassify_raster()
+   # test_reclassify_raster()
 
 
     def test_sieve():
@@ -1347,4 +1366,11 @@ if __name__ == "__main__":
 
         sieve_raster(path+input,50,8,path+output)#save to new file
         #sieve_raster(path + input, 50, 8, silence=False)#overwrite
-    test_sieve()
+    #test_sieve()
+
+
+    def test_wgscode():
+        print(get_wgs84_utm(38.42791286, -122.4100972))
+        print(get_wgs84_utm(35.800211, -119.123065))
+
+    #test_wgscode()
