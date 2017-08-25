@@ -22,6 +22,9 @@ from pysdss.database import pgconnect
 
 import pysdss.utility.utils as utils
 
+
+##############################
+
 def get_records(table, fields, conndict=None, cur=None):
     """
     return the id and a field
@@ -57,10 +60,9 @@ def get_records(table, fields, conndict=None, cur=None):
             if conn:
                 conn.close()
 
-
 def set_record(table, field, value, conndict=None, cur=None):
     """
-    set a field
+    insert a record with single field
     :param table: table to query , can be YieldType, SoilType, CanoType, SensoType
     :param tpe: string with the type to add
     :param conndict: dictionary with connection parameters
@@ -93,7 +95,7 @@ def set_record(table, field, value, conndict=None, cur=None):
 
 def delete_record(table, field, value, conndict=None, cur=None):
     """
-    Delete a record
+    Delete a record given a field value
     :param table:
     :param field: field to query
     :param value: query value
@@ -123,6 +125,8 @@ def delete_record(table, field, value, conndict=None, cur=None):
                 cur.close()
             if conn:
                 conn.close()
+
+###################################
 
 
 def upload_metadata(requestdata, METADATA_ID_TYPES,METADATA_FIELDS_TYPES,METADATA_IDS, conndict=None, cur=None):
@@ -174,7 +178,7 @@ def upload_metadata(requestdata, METADATA_ID_TYPES,METADATA_FIELDS_TYPES,METADAT
 
     except Exception as e:
         print(e)
-        raise(e)
+        raise Exception("error adding metadata into the database, try to upload the file again")
 
     finally:
         if not hadcursor:  # if we passed the cursor we will not close the connection in this function
@@ -234,7 +238,8 @@ def upload_data(requestdata,METADATA_DATA_TABLES, METADATA_IDS,UPLOAD_ROOT, proj
 
     except Exception as e:
         print(e)
-        raise(e)
+        raise Exception("error adding data into the database, try to upload the file again")
+
 
     else:
         #insert geometry and vacuumanalyze
@@ -266,7 +271,8 @@ def upload_data(requestdata,METADATA_DATA_TABLES, METADATA_IDS,UPLOAD_ROOT, proj
 
         except Exception as e:
             print(e)
-            raise e
+            #todo here we should delete the data already inserted
+            raise Exception("error adding data into the database, try to upload the file again")
 
     finally:
         if not hadcursor:  # if we passed the cursor we will not close the connection in this function
