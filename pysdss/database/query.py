@@ -142,6 +142,8 @@ def upload_metadata(requestdata, METADATA_ID_TYPES,METADATA_FIELDS_TYPES,METADAT
     :return:  the ID of the inserted row
     """
 
+
+
     metatable = parse.unquote(requestdata.get("metatable"))
     toolid = parse.unquote((requestdata.get("toolid")))
     toolidname = METADATA_ID_TYPES[metatable] #get the field name for the tool
@@ -149,6 +151,8 @@ def upload_metadata(requestdata, METADATA_ID_TYPES,METADATA_FIELDS_TYPES,METADAT
     cur = cur
     conn = None
     hadcursor = True if cur else False  # set if we are using an already existing connection
+
+
 
     try:
         if not cur:
@@ -159,6 +163,8 @@ def upload_metadata(requestdata, METADATA_ID_TYPES,METADATA_FIELDS_TYPES,METADAT
         #get fields and values to build the insert query
         fields = toolidname
         values = toolid
+
+
         if len(requestdata)>2: # 2 fields are metatable and toolid
             for i in requestdata:
                 if (i not in ["metatable","toolid","file"]):  #file is the uploaded file coming from the POST request
@@ -167,6 +173,7 @@ def upload_metadata(requestdata, METADATA_ID_TYPES,METADATA_FIELDS_TYPES,METADAT
                         values += ",'" + parse.unquote(requestdata[i])+"'"
                     else:
                         values += "," + parse.unquote(requestdata[i])
+
 
         #cur.execute("INSERT INTO %s (%s) VALUES (%s);", (AsIs(metatable),AsIs(field),value))  # AsIs will hide the quotes
         #build the query string, this may be a security problem ....
@@ -177,8 +184,8 @@ def upload_metadata(requestdata, METADATA_ID_TYPES,METADATA_FIELDS_TYPES,METADAT
         return iddataset
 
     except Exception as e:
-        print(e)
-        raise Exception("error adding metadata into the database, try to upload the file again")
+        raise Exception("error adding metadata into the database, try to upload the file again" + str(e))
+
 
     finally:
         if not hadcursor:  # if we passed the cursor we will not close the connection in this function
@@ -203,12 +210,14 @@ def upload_data(requestdata,METADATA_DATA_TABLES, METADATA_IDS,UPLOAD_ROOT, proj
     :param cur: psycopg2 cursor
     :return:
     """
+
+    tablename = METADATA_DATA_TABLES[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->canodatum
+    metaid = METADATA_IDS[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->id_canopy
+
     cur = cur
     conn = None
     hadcursor = True if cur else False  # set if we are using an already existing connection
 
-    tablename = METADATA_DATA_TABLES[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->canodatum
-    metaid = METADATA_IDS[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->id_canopy
 
     try:
         if not cur:
@@ -309,6 +318,7 @@ def upload_data_csv(cur, requestdata, tablename, filepath, debug=False):
         idlon = columns.index(parse.unquote(requestdata['lon']))
         idvalue = columns.index(parse.unquote(requestdata['value']))
 
+
         if requestdata.get("row"):
             idrow = columns.index(parse.unquote(requestdata['row']))
             for line in reader:
@@ -389,7 +399,78 @@ def upload_data_shape(cur, requestdata,tablename, filepath, debug=False):
                 if i % 5000 == 0:
                     print(i)
 
+#todo add query for colordata, dictionary request may add  sensor:"colorgrade|berrysize|berrycount"
+def get_geojson(requestdata,METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=100000, proj=4326, conndict=None, cur=None):
+    """
+    Return the geojson for data. requestdata
+    :param requestdata:  dictionary with request parameters
+
+            for example  {"metatable":"canopy", "iddataset": "1"}
+
+    :param METADATA_DATA_TABLES: mapping between metadata tables names and  dataset table names
+    :param DATA_IDS: id fields names for data tables
+    :param limit: the max number of features returned by the query, default 100000
+    :param proj:
+    :param conndict: dictionary with connection properties, if None the default connection will be used
+    :param cur: psycopg2 cursor
+    :return: the geojson
+    """
+    cur = cur
+    conn = None
+    hadcursor = True if cur else False  # set if we are using an already existing connection
+
+    tablename = METADATA_DATA_TABLES[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->canodatum
+    metaid = METADATA_IDS[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->id_canopy
+    dataid = DATA_IDS[parse.unquote(requestdata.get('metatable'))]   # e.g.  canopy: "id_cdata"
+
+    try:
+        if not cur:
+            if not conndict:
+                conndict = default_connection
+            conn = pgconnect(**conndict)
+            cur = conn.cursor()
+
+        cur.execute("""SELECT row_to_json(fc) FROM 
+          ( SELECT 'FeatureCollection' As type, array_to_json(array_agg(f)) As features
+          FROM (SELECT 'Feature' As type , ST_AsGeoJSON(lg.geom)::json As geometry, row_to_json(lp) As properties
+           FROM %s As lg  INNER JOIN (SELECT %s, value FROM canodatum) As lp
+               ON lg.%s = lp.%s where lg.%s=1 limit %s) As f)  As fc;""", #added limit otherwise query would run forever
+                    (AsIs(tablename), AsIs(dataid), AsIs(dataid), AsIs(dataid),AsIs(metaid),limit ))# AsIs will hide the quotes
+
+        return cur.fetchone()[0]
+
+    except Exception as e:
+        print(e)
+        raise Exception("error querying database, try again")
+
+    finally:
+        if not hadcursor:  # if we passed the cursor we will not close the connection in this function
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
+
+
+
+
 if __name__ == "__main__":
+
+    UPLOAD_ROOT = "/vagrant/code/pysdss/data/input/uploads/"
+
+    METADATA_ID_TYPES = {"yield": "id_ytype", "soil": "id_stype", "canopy": "id_ctype", "sensor": "id_stype"}
+    METADATA_FIELDS_TYPES = {"datetime": "string", "roworientation": "string", "swathWidth": "number",
+                             "ofset": "number", "rowSpacing": "number", "comments": "string"}
+    METADATA_IDS = {"yield": "id_yield", "soil": "id_soil", "canopy": "id_canopy", "sensor": "id_sensor"}
+
+    # link between metadata tables names and  dataset table names
+    METADATA_DATA_TABLES = {"yield": "yielddatum", "soil": "soildatum", "canopy": "canodatum",
+                            "sensor": "sensodatum", "sensodatum": ["berrycount", "berrysize", "colorgrade"]}
+
+    # id fields for data tables
+    DATA_IDS = {"yield": "id_ydata", "soil": "id_sdata", "canopy": "id_cdata", "sensor": "id_sdata"}
+    # id fields for sensor subtables
+    SENSOR_IDS = {"colorgrade": "id_cgrade", "berrysize": "id_size", "berrycount": "id_count"}
+
 
     def tests():
         ##tests####
@@ -400,10 +481,6 @@ if __name__ == "__main__":
 
     def test_upload_metadata():
         requestdata = {"metatable":"sensor", "toolid":"1", "datetime": "2017-08-15 14:19:25.63", "roworientation":"NE", "swathWidth":"90", "ofset":"5", "rowSpacing":"3", "comments":"hasta la vista"}
-        METADATA_ID_TYPES = {"yield": "id_ytype", "soil": "id_stype", "canopy": "id_ctype", "sensor": "id_stype"}
-        METADATA_FIELDS_TYPES = {"datetime": "string", "roworientation": "string", "swathWidth": "number",
-                                 "ofset": "number", "rowSpacing": "number", "comments": "string"}
-        METADATA_IDS = {"yield": "id_yield", "soil": "id_soil", "canopy": "id_canopy", "sensor": "id_sensor"}
 
         print(upload_metadata(requestdata, METADATA_ID_TYPES, METADATA_FIELDS_TYPES,METADATA_IDS, conndict=None, cur=None))
 
@@ -453,18 +530,6 @@ if __name__ == "__main__":
         conn = pgconnect(**conndict)
         cur = conn.cursor()
 
-        UPLOAD_ROOT = "/vagrant/code/pysdss/data/input/uploads/"
-
-        METADATA_ID_TYPES = {"yield": "id_ytype", "soil": "id_stype", "canopy": "id_ctype", "sensor": "id_stype"}
-        METADATA_FIELDS_TYPES = {"datetime": "string", "roworientation": "string", "swathWidth": "number",
-                                 "ofset": "number", "rowSpacing": "number", "comments": "string"}
-
-        # link between metadata tables names and  dataset table names
-        METADATA_DATA_TABLES = {"yield": "yielddatum", "soil": "soildatum", "canopy": "canodatum",
-                                "sensor": "sensodatum", "sensodatum": ["berrycount", "berrysize", "colorgrade"]}
-        METADATA_IDS = {"yield": "id_yield", "soil": "id_soil", "canopy": "id_canopy", "sensor": "id_sensor"}
-
-
         ######## upload csv
         requestdata = {"metatable":"canopy", "filename":"2017-07-25 To Kalon NDVI.csv", "folderid":"a5f9e0915ecb94449b26a8dc52b970cc0", "iddataset": "1", "lat": "lat", "lon": "lng", "value":"sf01",
                        "row": "sensor_addr", "swathWidth": "90", "ofset": "5", "rowSpacing": "3","comments": "hasta la vista"}
@@ -478,3 +543,14 @@ if __name__ == "__main__":
 
 
     #test_upload_data()
+
+
+    def test_geojson():
+        requestdata ={"metatable": "canopy", "iddataset": "1"}
+        result = get_geojson(requestdata, METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=100000,proj=4326, conndict=None, cur=None)
+        result = str(result)
+        #print(result)
+        g=open(UPLOAD_ROOT+"/xxx.json",'w')
+        g.write(str(result))
+
+    test_geojson()
