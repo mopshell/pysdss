@@ -2,6 +2,7 @@
 from geoprocessing import app
 import time
 
+
 @app.task
 def add(x, y):
     return x + y
@@ -21,6 +22,7 @@ def xsum(numbers):
 def info(self,a,b):
     print('Executing task id {0.id}, args: {0.args!r} kwargs: {0.kwargs!r}'.
           format(self.request))
+
 
 @app.task
 def sleep():

@@ -75,7 +75,12 @@ def synchronous_test_upload(*args, **kw):
         # return Response(up_file.name, status.HTTP_201_CREATED)
         # return the folderID, the metadata newrow ID, and the file extension
         #return Response({"success": True, "content": [idf, iddataset, up_file.name.split('.')[-1]]})
-        return {"success": True, "content": [idf, iddataset, fl_ext]}
+        #return {"success": True, "content": [idf, iddataset, fl_ext]}
+
+        return {"success": True, "content": [
+            {"name":"folderid","type":"string","value":idf },
+            {"name":"datasetid","type":"number","value":iddataset},
+            {"name":"fileformat","type":"string","value":fl_ext}]}
 
     except Exception as e:
         #return Response({"success": False, "content": str(e)})  # errors coming from query.upload_metadata
