@@ -95,7 +95,14 @@ def upload_data(*args, **kw):
         return dictionary, content follows the rest api specification
         {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
         {"success": False, "content": "<errorsstring>"}
+
+
+    curl -X  POST -H  'Content-Type:multipart/form-data' -F 'metatable=canopy' -F 'row=sensor_add' -F 'filename=ToKalonNDVI.zip' -F 'folderid=a5f9e0915ecb94449b26a8dc52b970cc0' -F 'datasetid=2' -F 'lat=lat' -F 'lon=lng' -F 'value1=sf01' -F 'value2=sf02' -F 'value3=sf03' -F 'value4=sf04' -F 'value5=course' -F 'value6=speed' http://localhost:8000/processing/database/todatabase/executesync/
+
+    curl -X  POST -H  'Content-Type:multipart/form-data' -F 'metatable=canopy' -F 'row=sensor_addr' -F 'filename=2017-07-25 To Kalon NDVI.csv' -F 'folderid=a5f9e0915ecb94449b26a8dc52b970cc0' -F 'datasetid=2' -F 'lat=lat' -F 'lon=lng' -F 'value1=sf01' -F 'value2=sf02' -F 'value3=sf03' -F 'value4=sf04' -F 'value5=course' -F 'value6=speed' http://localhost:8000/processing/database/todatabase/executesync/
+
     """
+
 
     try:
 
