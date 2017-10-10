@@ -669,7 +669,7 @@ def get_geojson(requestdata,METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=
     Return the geojson for data. requestdata
     :param requestdata:  dictionary with request parameters
 
-            for example  {"metatable":"canopy", "iddataset": "1"}
+            for example  {"metatable":"canopy", "iddataset": "1", "values":"value1,value5"}
 
     :param METADATA_DATA_TABLES: mapping between metadata tables names and  dataset table names
     :param DATA_IDS: id fields names for data tables
@@ -683,9 +683,13 @@ def get_geojson(requestdata,METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=
     conn = None
     hadcursor = True if cur else False  # set if we are using an already existing connection
 
+    metatable = parse.unquote(requestdata.get('metatable'))
     tablename = METADATA_DATA_TABLES[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->canodatum
     metaid = METADATA_IDS[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->id_canopy
     dataid = DATA_IDS[parse.unquote(requestdata.get('metatable'))]   # e.g.  canopy: "id_cdata"
+    id = parse.unquote(requestdata.get('datasetid'))
+    values = requestdata.get('values')  # "value1,value2"
+    if values: values=parse.unquote(values)
 
     try:
         if not cur:
@@ -694,12 +698,28 @@ def get_geojson(requestdata,METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=
             conn = pgconnect(**conndict)
             cur = conn.cursor()
 
+        #open metadata to get the valuemap disctionary
+        cur.execute("""SELECT valuemap from %s where %s=%s""", (AsIs(metatable), AsIs(metaid), AsIs(id)))
+        vmapdict = cur.fetchone()[0]
+
+        #if the request contains values use them to get the field names from the valuemap otherwise use all names from
+        #the valuemap
+        vl = ""
+        if values:
+            vlist = values.split(',')
+            for i,s in enumerate(vlist):
+                vlist[i] = vlist[i] + " as " + vmapdict[s]
+            vl = ",".join(vlist)
+        else:
+            for i in vmapdict: vl += i + " as " + vmapdict[i] + ","
+            vl = vl[:-1] #skip last ','
+
         cur.execute("""SELECT row_to_json(fc) FROM 
           ( SELECT 'FeatureCollection' As type, array_to_json(array_agg(f)) As features
           FROM (SELECT 'Feature' As type , ST_AsGeoJSON(lg.geom)::json As geometry, row_to_json(lp) As properties
-           FROM %s As lg  INNER JOIN (SELECT %s, value FROM canodatum) As lp   #todo 'value FROM canodatum' should be changed!
-               ON lg.%s = lp.%s where lg.%s=1 limit %s) As f)  As fc;""", #added limit otherwise query would run forever
-                    (AsIs(tablename), AsIs(dataid), AsIs(dataid), AsIs(dataid),AsIs(metaid),limit ))# AsIs will hide the quotes
+           FROM %s As lg  INNER JOIN (SELECT %s,%s FROM %s) As lp   
+               ON lg.%s = lp.%s where lg.%s=%s limit %s) As f)  As fc;""", #added limit otherwise query would run forever
+                    (AsIs(tablename), AsIs(dataid), AsIs(vl), AsIs(tablename),  AsIs(dataid), AsIs(dataid),AsIs(metaid), AsIs(id),limit ))# AsIs will hide the quotes
 
         return cur.fetchone()[0]
 
@@ -715,6 +735,50 @@ def get_geojson(requestdata,METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=
                 conn.close()
 
 
+def get_vmap(requestdata, METADATA_IDS, conndict=None, cur=None):
+    """
+    Return the mapping between the valuen fields and the original field names
+    :param requestdata:  dictionary with request parameters
+
+            for example  {"metatable":"canopy", "iddataset": "2"}
+
+    :param METADATA_DATA_TABLES: mapping between metadata tables names and  dataset table names
+    :param DATA_IDS: id fields names for data tables
+    :param limit: the max number of features returned by the query, default 100000
+    :param proj:
+    :param conndict: dictionary with connection properties, if None the default connection will be used
+    :param cur: psycopg2 cursor
+    :return: the geojson
+    """
+    cur = cur
+    conn = None
+    hadcursor = True if cur else False  # set if we are using an already existing connection
+
+    metatable = parse.unquote(requestdata.get('metatable'))
+    metaid = METADATA_IDS[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->id_canopy
+    id = parse.unquote(requestdata.get('datasetid'))
+
+    try:
+        if not cur:
+            if not conndict:
+                conndict = default_connection
+            conn = pgconnect(**conndict)
+            cur = conn.cursor()
+
+        #open metadata to get the valuemap disctionary
+        cur.execute("""SELECT valuemap from %s where %s=%s""", (AsIs(metatable), AsIs(metaid), AsIs(id)))
+        return cur.fetchone()[0]
+
+    except Exception as e:
+        print(e)
+        raise Exception("error querying database, try again")
+
+    finally:
+        if not hadcursor:  # if we passed the cursor we will not close the connection in this function
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
 
 
 if __name__ == "__main__":
@@ -823,17 +887,24 @@ if __name__ == "__main__":
 
 
     def test_geojson():
-        requestdata ={"metatable": "canopy", "datasetid": "1"}
+        requestdata ={"metatable": "canopy", "datasetid": "2", "values": "value1,value6"}
         result = get_geojson(requestdata, METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=100000,proj=4326, conndict=None, cur=None)
         result = str(result)
-        #print(result)
-        g=open(UPLOAD_ROOT+"/xxx.json",'w')
-        g.write(str(result))
+        print(result)
+        print()
+        '''requestdata ={"metatable": "canopy", "datasetid": "2"}
+        result = get_geojson(requestdata, METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=10,proj=4326, conndict=None, cur=None)
+        result = str(result)
+        print(result)'''
+
+
+        #g=open(UPLOAD_ROOT+"/xxx.json",'w')
+        #g.write(str(result))
 
     #test_geojson()
 
 
-    def test_valuemap():
+    def test_update_valuemap():
 
         requestdata = {"metatable": "sensor", "datasetid": "44", "value1":"col1","value2":"col2","value3":"col3","value4":"col4","value5":"col5","value6":"col6" }
 
@@ -850,3 +921,10 @@ if __name__ == "__main__":
         conn.close()
 
     #test_valuemap()
+
+    def test_get_vmap():
+
+        requestdata = {"metatable": "canopy", "datasetid": "2"}
+        print (get_vmap(requestdata, METADATA_IDS, conndict=None, cur=None))
+
+    #test_get_vmap()

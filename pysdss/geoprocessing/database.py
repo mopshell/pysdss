@@ -103,7 +103,6 @@ def upload_data(*args, **kw):
 
     """
 
-
     try:
 
         # get additional keys and delete them before calling the method, did thid to respect the legacy method signature
@@ -122,6 +121,66 @@ def upload_data(*args, **kw):
         # return {"success": True, "content": [idf, iddataset, fl_ext]}
 
         return {"success": True, "content": [{"name": "response", "type": "string", "value": "data was uploaded"}]}
+
+    except Exception as e:
+        # return Response({"success": False, "content": str(e)})  # errors coming from query.upload_metadata
+        return {"success": False, "content": str(e)}  # errors coming from query.upload_metadata
+
+
+def get_json(*args, **kw):
+    """
+    Receive arguments from the django request and call method to upload metadata to database
+    :param args:
+    :param kw:
+    :return:
+        return dictionary, content follows the rest api specification
+        {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
+        {"success": False, "content": "<errorsstring>"}
+    """
+
+    try:
+
+        # get additional keys and delete them before calling the method, did this to respect the legacy method signature
+
+
+        METADATA_DATA_TABLES= kw['METADATA_DATA_TABLES']
+        METADATA_IDS= kw['METADATA_IDS']
+        DATA_IDS= kw['DATA_IDS']
+
+        del kw['METADATA_DATA_TABLES']
+        del kw['METADATA_IDS']
+        del kw['DATA_IDS']
+
+        gjson = query.get_geojson(kw,METADATA_DATA_TABLES,METADATA_IDS,DATA_IDS  )
+
+        return {"success": True, "content": [
+            {"name": "geojson", "type": "json", "value": gjson}]}
+
+    except Exception as e:
+        # return Response({"success": False, "content": str(e)})  # errors coming from query.upload_metadata
+        return {"success": False, "content": str(e)}  # errors coming from query.upload_metadata
+
+
+def get_vmap(*args, **kw):
+    """
+    Receive arguments from the django request and call method to upload metadata to database
+    :param args:
+    :param kw:
+    :return:
+        return dictionary, content follows the rest api specification
+        {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
+        {"success": False, "content": "<errorsstring>"}
+    """
+
+    try:
+
+        # get additional keys and delete them before calling the method, did this to respect the legacy method signature
+        METADATA_IDS= kw['METADATA_IDS']
+        del kw['METADATA_IDS']
+
+        vmap = query.get_vmap(kw, METADATA_IDS)
+        return {"success": True, "content": [
+            {"name": "vmap", "type": "json", "value": vmap}]}
 
     except Exception as e:
         # return Response({"success": False, "content": str(e)})  # errors coming from query.upload_metadata
