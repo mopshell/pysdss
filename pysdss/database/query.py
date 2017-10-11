@@ -20,7 +20,8 @@ import shapefile
 from pysdss.settings import default_connection
 from pysdss.database import pgconnect
 
-import pysdss.utility.utils as utils
+import pysdss.utils as utils
+import pysdss.utility.utils as geoutils
 
 
 ##############################
@@ -206,6 +207,7 @@ def upload_data(requestdata,METADATA_DATA_TABLES, METADATA_IDS,UPLOAD_ROOT, proj
 
     :param METADATA_DATA_TABLES: mapping between metadata tables names and  dataset table names
     :param METADATA_IDS: id fields names for metadata tables
+    :param UPLOAD_ROOT: the root folder to upload data  to
     :param conndict: dictionary with connection properties, if None the default connection will be used
     :param cur: psycopg2 cursor
     :return: True if everything is ok
@@ -664,7 +666,7 @@ def upload_data_shape(cur, requestdata,tablename,  metaid, filepath, debug=False
 
 
 #todo add query for colordata, dictionary request may add  sensor:"colorgrade|berrysize|berrycount"
-def get_geojson(requestdata,METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=100000, proj=4326, conndict=None, cur=None):
+def get_geojson(requestdata,METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, proj=4326, conndict=None, cur=None):
     """
     Return the geojson for data. requestdata
     :param requestdata:  dictionary with request parameters
@@ -672,8 +674,8 @@ def get_geojson(requestdata,METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=
             for example  {"metatable":"canopy", "iddataset": "1", "values":"value1,value5"}
 
     :param METADATA_DATA_TABLES: mapping between metadata tables names and  dataset table names
-    :param DATA_IDS: id fields names for data tables
-    :param limit: the max number of features returned by the query, default 100000
+    :param METADATA_IDS: id names for metadata tables
+    :param DATA_IDS: id names for data tables
     :param proj:
     :param conndict: dictionary with connection properties, if None the default connection will be used
     :param cur: psycopg2 cursor
@@ -690,6 +692,12 @@ def get_geojson(requestdata,METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=
     id = parse.unquote(requestdata.get('datasetid'))
     values = requestdata.get('values')  # "value1,value2"
     if values: values=parse.unquote(values)
+
+
+    limit = requestdata.get('limit')  #
+    if limit: limit=parse.unquote(limit)
+    else: limit=100000  #the max number of features returned by the query
+
 
     try:
         if not cur:
@@ -719,7 +727,7 @@ def get_geojson(requestdata,METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=
           FROM (SELECT 'Feature' As type , ST_AsGeoJSON(lg.geom)::json As geometry, row_to_json(lp) As properties
            FROM %s As lg  INNER JOIN (SELECT %s,%s FROM %s) As lp   
                ON lg.%s = lp.%s where lg.%s=%s limit %s) As f)  As fc;""", #added limit otherwise query would run forever
-                    (AsIs(tablename), AsIs(dataid), AsIs(vl), AsIs(tablename),  AsIs(dataid), AsIs(dataid),AsIs(metaid), AsIs(id),limit ))# AsIs will hide the quotes
+                    (AsIs(tablename), AsIs(dataid), AsIs(vl), AsIs(tablename),  AsIs(dataid), AsIs(dataid),AsIs(metaid), AsIs(id),AsIs(limit)))# AsIs will hide the quotes
 
         return cur.fetchone()[0]
 
@@ -742,10 +750,7 @@ def get_vmap(requestdata, METADATA_IDS, conndict=None, cur=None):
 
             for example  {"metatable":"canopy", "iddataset": "2"}
 
-    :param METADATA_DATA_TABLES: mapping between metadata tables names and  dataset table names
-    :param DATA_IDS: id fields names for data tables
-    :param limit: the max number of features returned by the query, default 100000
-    :param proj:
+    :param METADATA_IDS: id names for metadata tables
     :param conndict: dictionary with connection properties, if None the default connection will be used
     :param cur: psycopg2 cursor
     :return: the geojson
@@ -756,6 +761,7 @@ def get_vmap(requestdata, METADATA_IDS, conndict=None, cur=None):
 
     metatable = parse.unquote(requestdata.get('metatable'))
     metaid = METADATA_IDS[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->id_canopy
+
     id = parse.unquote(requestdata.get('datasetid'))
 
     try:
@@ -779,6 +785,111 @@ def get_vmap(requestdata, METADATA_IDS, conndict=None, cur=None):
                 cur.close()
             if conn:
                 conn.close()
+
+
+def select_data(requestdata,METADATA_DATA_TABLES, METADATA_IDS,DATA_IDS, UPLOAD_ROOT, conndict=None, cur=None):
+    """
+    Select data to use for further processing (e.g. for interpolation), data is projected to wgs84 utm
+
+    :param requestdata:  dictionary with request parameters
+
+            for example  {"metatable":"canopy", "datasetid": "2", "ids":"1000,1001,1002" , "folderid":""a5f9e0915ecb94449b26a8dc52b970cc0"}
+                        {"metatable":"canopy", "datasetid": "2", "ids":"1000,1001,1002" , "exclude":"true" "folderid":""a5f9e0915ecb94449b26a8dc52b970cc0"}
+                        use exclude to exclude the ids from the selction, by defauult they'er included
+
+    :param METADATA_IDS: id names for metadata tables
+    :param DATA_IDS: id names for data tables
+    :param UPLOAD_ROOT: the root folder to upload data  to
+    :param conndict: dictionary with connection properties, if None the default connection will be used
+    :param cur: psycopg2 cursor
+    :return: folderid,filename,epsg code
+    """
+
+
+    cur = cur
+    conn = None
+    hadcursor = True if cur else False  # set if we are using an already existing connection
+
+    metatable = parse.unquote(requestdata.get('metatable'))
+    tablename = METADATA_DATA_TABLES[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->canodatum
+    metaid = METADATA_IDS[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->id_canopy
+    dataid = DATA_IDS[parse.unquote(requestdata.get('metatable'))]   # e.g.  canopy: "id_cdata"
+    datasetid = parse.unquote(requestdata.get('datasetid'))
+    ids = parse.unquote(requestdata.get('ids'))
+
+    exclude = requestdata.get('exclude')
+
+    #check if a folder name was passed otherwise create a new one
+    folderid = requestdata.get('folderid')
+    if folderid: folderid=parse.unquote(folderid)
+    else:# create unique identifier to name the folder
+        folderid = utils.create_uniqueid()
+        if not os.path.exists(UPLOAD_ROOT + '/' + folderid): os.mkdir(UPLOAD_ROOT + '/' + folderid)
+
+    filename = "selected.csv"
+
+    try:
+        if not cur:
+            if not conndict:
+                conndict = default_connection
+            conn = pgconnect(**conndict)
+            cur = conn.cursor()
+
+        #open metadata to get the valuemap disctionary
+        cur.execute("""SELECT valuemap from %s where %s=%s""", (AsIs(metatable), AsIs(metaid), AsIs(datasetid)))
+        vmap = cur.fetchone()[0]
+
+        #build value1 as xxx  , value2 as xxx
+        v1 = ""
+        for i in vmap:
+            v1 += i + " as " + vmap[i] + ","
+        v1 = v1[:-1]  # skip last ','
+
+
+        #select first row in a table and get lat/lon, use them to get the EPSG code wgs84 utm
+        cur.execute("""select lat,lon from %s limit 1;""", (AsIs(tablename),))
+        result = cur.fetchone()
+        #print(result)
+        epsg = geoutils.get_wgs84_utm(result[0], result[1])
+
+
+        if exclude:
+            # create a temporary database view , use vmap to change valuen field names
+            #cur.execute("""CREATE TEMP VIEW selected AS
+            #        SELECT %s, %s, row, lat, lon, %s FROM %s WHERE %s=%s AND %s not in (%s) order by %s;""",
+            #            (AsIs(dataid),AsIs(metaid),AsIs(v1),AsIs(tablename),AsIs(metaid),AsIs(datasetid), AsIs(dataid),AsIs(ids), AsIs(dataid)))
+
+            cur.execute("""CREATE TEMP VIEW selected AS
+                    SELECT %s, %s, row, round(ST_X(ST_TRANSFORM(geom,%s))::numeric,2) as x, round(ST_Y(ST_TRANSFORM(geom,%s))::numeric,2) as y, %s FROM %s WHERE %s=%s AND %s not in (%s) order by %s;""",
+                        (AsIs(dataid), AsIs(metaid), epsg, epsg, AsIs(v1), AsIs(tablename), AsIs(metaid), AsIs(datasetid), AsIs(dataid),
+                        AsIs(ids), AsIs(dataid)))
+
+        else:
+            # create a temporary database view , use vmap to change valuen field names
+            #cur.execute("""CREATE TEMP VIEW selected AS
+            #        SELECT %s, %s, row, lat, lon, %s FROM %s WHERE %s in (%s);""",(AsIs(dataid),AsIs(metaid),AsIs(v1),AsIs(tablename),AsIs(dataid),AsIs(ids)))
+
+            cur.execute("""CREATE TEMP VIEW selected AS
+                    SELECT %s, %s, row, round(ST_X(ST_TRANSFORM(geom,%s))::numeric,2) as x, round(ST_Y(ST_TRANSFORM(geom,%s))::numeric,2) as y, %s FROM %s WHERE %s in (%s);""",
+                        (AsIs(dataid), AsIs(metaid), epsg, epsg,  AsIs(v1), AsIs(tablename), AsIs(dataid), AsIs(ids)))
+
+
+        # use copy to download the data
+        out = UPLOAD_ROOT + '/' + folderid + '/' + filename
+        cur.execute("""COPY(SELECT * from selected) TO '%s' WITH CSV HEADER;""", (AsIs(out),))
+
+        return folderid,filename,epsg
+
+    except Exception as e:
+        raise Exception("error querying database, try again: " + e)
+
+    finally:
+        if not hadcursor:  # if we passed the cursor we will not close the connection in this function
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
+
 
 
 if __name__ == "__main__":
@@ -887,12 +998,12 @@ if __name__ == "__main__":
 
 
     def test_geojson():
-        requestdata ={"metatable": "canopy", "datasetid": "2", "values": "value1,value6"}
-        result = get_geojson(requestdata, METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=100000,proj=4326, conndict=None, cur=None)
+        requestdata ={"metatable": "canopy", "datasetid": "2", "values": "value1,value6", "limit":"10"}
+        result = get_geojson(requestdata, METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS,proj=4326, conndict=None, cur=None)
         result = str(result)
         print(result)
         print()
-        '''requestdata ={"metatable": "canopy", "datasetid": "2"}
+        '''requestdata ={"metatable": "canopy", "datasetid": "2", "limit":"10"}
         result = get_geojson(requestdata, METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, limit=10,proj=4326, conndict=None, cur=None)
         result = str(result)
         print(result)'''
@@ -928,3 +1039,12 @@ if __name__ == "__main__":
         print (get_vmap(requestdata, METADATA_IDS, conndict=None, cur=None))
 
     #test_get_vmap()
+
+
+    def test_select():
+        requestdata ={"metatable": "canopy", "datasetid": "2", "ids": "439689,439691,439692", "folderid": "a5f9e0915ecb94449b26a8dc52b970cc0", "exclude":"true"}
+        requestdata ={"metatable": "canopy", "datasetid": "2", "ids": "439689,439691,439692", "folderid": "a5f9e0915ecb94449b26a8dc52b970cc0"}
+        select_data(requestdata,METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, UPLOAD_ROOT)
+
+    test_select()
+

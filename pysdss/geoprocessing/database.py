@@ -136,6 +136,10 @@ def get_json(*args, **kw):
         return dictionary, content follows the rest api specification
         {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
         {"success": False, "content": "<errorsstring>"}
+
+    curl -X  POST -H  'Content-Type:multipart/form-data' -F 'metatable=canopy'  -F 'datasetid=2' http://localhost:8000/processing/database/getjson/executesync/
+    curl -X  POST -H  'Content-Type:multipart/form-data' -F 'metatable=canopy'  -F 'datasetid=2' -F 'values=value1,value6' http://localhost:8000/processing/database/getjson/executesync/
+
     """
 
     try:
@@ -170,6 +174,9 @@ def get_vmap(*args, **kw):
         return dictionary, content follows the rest api specification
         {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
         {"success": False, "content": "<errorsstring>"}
+
+    curl -X  POST -H  'Content-Type:multipart/form-data' -F 'metatable=canopy'  -F 'datasetid=2' http://localhost:8000/processing/database/getvmap/executesync/
+
     """
 
     try:
@@ -181,6 +188,45 @@ def get_vmap(*args, **kw):
         vmap = query.get_vmap(kw, METADATA_IDS)
         return {"success": True, "content": [
             {"name": "vmap", "type": "json", "value": vmap}]}
+
+    except Exception as e:
+        # return Response({"success": False, "content": str(e)})  # errors coming from query.upload_metadata
+        return {"success": False, "content": str(e)}  # errors coming from query.upload_metadata
+
+
+def upload_ids(*args, **kw):
+    """
+    Receive arguments from the django request and call method to upload metadata to database
+    :param args:
+    :param kw:
+    :return:
+        return dictionary, content follows the rest api specification
+        {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
+        {"success": False, "content": "<errorsstring>"}
+
+    curl -X  POST -H  'Content-Type:multipart/form-data' -F 'metatable=canopy'  -F 'datasetid=2' -F 'ids=439689,439691,439692' -F 'folderid=a5f9e0915ecb94449b26a8dc52b970cc0' -F 'exclude=true' http://localhost:8000/processing/database/uploadids/executesync/
+    curl -X  POST -H  'Content-Type:multipart/form-data' -F 'metatable=canopy'  -F 'datasetid=2' -F 'ids=439689,439691,439692' -F 'folderid=a5f9e0915ecb94449b26a8dc52b970cc0' http://localhost:8000/processing/database/uploadids/executesync/
+
+    """
+
+    try:
+
+        # get additional keys and delete them before calling the method, did this to respect the legacy method signature
+        METADATA_DATA_TABLES = kw['METADATA_DATA_TABLES']
+        METADATA_IDS= kw['METADATA_IDS']
+        DATA_IDS = kw['DATA_IDS']
+        UPLOAD_ROOT = kw['UPLOAD_ROOT']
+        del kw['METADATA_DATA_TABLES']
+        del kw['METADATA_IDS']
+        del kw['DATA_IDS']
+        del kw['UPLOAD_ROOT']
+
+        folderid, filename, epsg = query.select_data(kw,METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, UPLOAD_ROOT)
+
+        return {"success": True, "content": [
+            {"name": "folderid", "type": "string", "value": folderid},
+            {"name": "filename", "type": "string", "value": filename},
+            {"name": "epsg", "type": "number", "value": epsg}]}
 
     except Exception as e:
         # return Response({"success": False, "content": str(e)})  # errors coming from query.upload_metadata
