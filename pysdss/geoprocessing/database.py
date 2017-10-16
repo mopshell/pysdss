@@ -21,6 +21,19 @@ def upload_metadata(*args, **kw):
         return dictionary, content follows the rest api specification
         {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
         {"success": False, "content": "<errorsstring>"}
+
+    ## tests
+    # 1 parameters missing
+    # curl -X POST -H 'Content-Type:multipart/form-data' -F 'file=@//vagrant/code/pysdss/data/input/2016_06_17.csv' http://localhost:8000/processing/database/upload/executesync/
+    # 2wrong format
+    # curl -X POST -H 'Content-Type:multipart/form-data' -F 'file=@//vagrant/code/pysdss/data/input/2016_06_17.txt' -F 'metatable=sensor' -F 'toolid=1' -F 'datetime=2017-08-15%2014:19:25.63' -F 'roworientation=NE' http://localhost:8000/processing/database/upload/executesync/
+    # 3OK
+    # curl -X POST -H 'Content-Type:multipart/form-data' -F 'file=@//vagrant/code/pysdss/data/input/shape.zip'  -F 'metatable=sensor' -F 'toolid=1' -F 'datetime=2017-08-15%2014:19:25.63' -F 'roworientation=NE' http://localhost:8000/processing/database/upload/executesync/
+    # 4 wrong zip content
+    # curl -X POST -H 'Content-Type:multipart/form-data' -F 'file=@//vagrant/code/pysdss/data/input/badshape.zip' -F 'metatable=sensor' -F 'toolid=1' -F 'datetime=2017-08-15%2014:19:25.63' -F 'roworientation=NE' http://localhost:8000/processing/database/upload/executesync/
+    # 5 OK
+    # curl -X POST -H 'Content-Type:multipart/form-data' -F 'file=@//vagrant/code/pysdss/data/input/2016_06_17.csv' -F 'metatable=sensor' -F 'toolid=1' -F 'datetime=2017-08-15%2014:19:25.63' -F 'roworientation=NE' http://localhost:8000/processing/database/upload/executesync/
+
     """
 
 
@@ -66,6 +79,10 @@ def get_fields(*args, **kw):
         return dictionary, content follows the rest api specification
         {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
         {"success": False, "content": "<errorsstring>"}
+
+    curl -X  POST -H  'Content-Type:multipart/form-data' -F 'fileformat=zip' -F 'folderid=a5f9e0915ecb94449b26a8dc52b970cc0'   http://localhost:8000/processing/database/getfields/executesync/
+
+
     """
 
     try:
@@ -95,6 +112,9 @@ def upload_data(*args, **kw):
         return dictionary, content follows the rest api specification
         {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
         {"success": False, "content": "<errorsstring>"}
+
+
+
 
 
     curl -X  POST -H  'Content-Type:multipart/form-data' -F 'metatable=canopy' -F 'row=sensor_add' -F 'filename=ToKalonNDVI.zip' -F 'folderid=a5f9e0915ecb94449b26a8dc52b970cc0' -F 'datasetid=2' -F 'lat=lat' -F 'lon=lng' -F 'value1=sf01' -F 'value2=sf02' -F 'value3=sf03' -F 'value4=sf04' -F 'value5=course' -F 'value6=speed' http://localhost:8000/processing/database/todatabase/executesync/
