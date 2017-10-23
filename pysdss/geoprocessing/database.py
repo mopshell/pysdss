@@ -103,6 +103,39 @@ def get_fields(*args, **kw):
         return {"success": False, "content": str(e)}  # errors coming from query.upload_metadata
 
 
+def get_tools(*args, **kw):
+    """
+    Receive arguments from the django request and call method to get id and tool names
+    :param args:
+    :param kw:
+    :return:
+        return dictionary, content follows the rest api specification
+        {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
+        {"success": False, "content": "<errorsstring>"}
+
+    curl -X  POST -H  'Content-Type:multipart/form-data' -F 'metatable=canopy' -F http://localhost:8000/processing/database/gettools/executesync/
+
+
+    """
+
+    try:
+
+        # get additional keys and delete them before calling the method, did this to respect the legacy method signature
+        TOOLS = kw['TOOLS']
+        del kw['TOOLS']
+
+        tools = query.get_tools(kw, TOOLS)
+
+        return {"success": True, "content": [
+            {"name": "tools", "type": "json", "value": tools}]}
+
+    except Exception as e:
+        # return Response({"success": False, "content": str(e)})  # errors coming from query.upload_metadata
+        return {"success": False, "content": str(e)}  # errors coming from query.upload_metadata
+
+
+
+
 def upload_data(*args, **kw):
     """
     Receive arguments from the django request and call method to upload metadata to database
@@ -112,9 +145,6 @@ def upload_data(*args, **kw):
         return dictionary, content follows the rest api specification
         {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
         {"success": False, "content": "<errorsstring>"}
-
-
-
 
 
     curl -X  POST -H  'Content-Type:multipart/form-data' -F 'metatable=canopy' -F 'row=sensor_add' -F 'filename=ToKalonNDVI.zip' -F 'folderid=a5f9e0915ecb94449b26a8dc52b970cc0' -F 'datasetid=2' -F 'lat=lat' -F 'lon=lng' -F 'value1=sf01' -F 'value2=sf02' -F 'value3=sf03' -F 'value4=sf04' -F 'value5=course' -F 'value6=speed' http://localhost:8000/processing/database/todatabase/executesync/
@@ -216,7 +246,7 @@ def get_vmap(*args, **kw):
 
 def upload_ids(*args, **kw):
     """
-    Receive arguments from the django request and call method to upload metadata to database
+    Receive arguments from the django request and call method to seklect data from the database
     :param args:
     :param kw:
     :return:
@@ -251,3 +281,95 @@ def upload_ids(*args, **kw):
     except Exception as e:
         # return Response({"success": False, "content": str(e)})  # errors coming from query.upload_metadata
         return {"success": False, "content": str(e)}  # errors coming from query.upload_metadata
+
+
+
+def get_datasets(*args, **kw):
+    """
+    Receive arguments from the django request and call method to get the available dataset
+    :param args:
+    :param kw:
+    :return:
+        return dictionary, content follows the rest api specification
+        {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
+        {"success": False, "content": "<errorsstring>"}
+
+    curl -X  POST -H  'Content-Type:multipart/form-data' -F 'metatable=canopy' http://localhost:8000/processing/database/getdatasets/executesync/
+
+    """
+
+    try:
+
+        # get additional keys and delete them before calling the method, did this to respect the legacy method signature
+        METADATA_IDS= kw['METADATA_IDS']
+        del kw['METADATA_IDS']
+
+        datasets = query.get_datasets(kw, METADATA_IDS)
+        return {"success": True, "content": [{"name": "datasets", "type": "list", "value": datasets}]}
+
+    except Exception as e:
+        # return Response({"success": False, "content": str(e)})  # errors coming from query.upload_metadata
+        return {"success": False, "content": str(e)}  # errors coming from query.get_datasets
+
+
+
+def get_dataset_info(*args, **kw):
+    """
+    Receive arguments from the django request and call method to get information for a dataset
+    :param args:
+    :param kw:
+    :return:
+        return dictionary, content follows the rest api specification
+        {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
+        {"success": False, "content": "<errorsstring>"}
+
+    curl -X  POST -H  'Content-Type:multipart/form-data' -F 'metatable=canopy' -F 'datasetid=64' http://localhost:8000/processing/database/getdatasetinfo/executesync/
+
+    """
+
+    try:
+
+        # get additional keys and delete them before calling the method, did this to respect the legacy method signature
+        METADATA_IDS= kw['METADATA_IDS']
+        TOOLS = kw['TOOLS']
+        METADATA_DATA_TABLES = kw['METADATA_DATA_TABLES']
+        del kw['METADATA_IDS']
+        del kw['TOOLS']
+        del kw['METADATA_DATA_TABLES']
+
+        datasetinfo = query.get_dataset_info(kw, METADATA_DATA_TABLES, METADATA_IDS, TOOLS)
+        return {"success": True, "content": [
+            {"name": "datasetinfo", "type": "json", "value": datasetinfo}]}
+
+    except Exception as e:
+        # return Response({"success": False, "content": str(e)})  # errors coming from query.upload_metadata
+        return {"success": False, "content": str(e)}  # errors coming from query.get_datasets
+#add_tool(*args, **kw)
+
+
+def add_tool(*args, **kw):
+    """
+    Receive arguments from the django request and call method to add a new tool
+    :param args:
+    :param kw:
+    :return:
+        return dictionary, content follows the rest api specification
+        {"success": True, "content": [{"name": "", "type": "", "value": ""}, ...]}
+        {"success": False, "content": "<errorsstring>"}
+
+    curl -X  POST -H  'Content-Type:multipart/form-data' -F 'metatable=canopy' -F 'toolname=supertool' -F 'comments=this is supertool' http://localhost:8000/processing/database/addtool/executesync/
+
+    """
+
+    try:
+
+        # get additional keys and delete them before calling the method, did this to respect the legacy method signature
+        TOOLS = kw['TOOLS']
+        del kw['TOOLS']
+
+        query.add_tool(kw, TOOLS)
+        return {"success": True, "content": [{"name": "response", "type": "string", "value": "tool added"}] }
+
+    except Exception as e:
+        # return Response({"success": False, "content": str(e)})  # errors coming from query.upload_metadata
+        return {"success": False, "content": str(e)}  # errors coming from query.get_datasets

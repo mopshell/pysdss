@@ -12,6 +12,7 @@ import urllib.parse as parse
 import csv
 import math
 import os.path
+import json
 
 import psycopg2
 from psycopg2.extensions import AsIs
@@ -127,7 +128,51 @@ def delete_record(table, field, value, conndict=None, cur=None):
             if conn:
                 conn.close()
 
-###################################
+################################################################################
+
+def get_tools(requestdata, TOOLS, conndict=None, cur=None):
+    """
+
+    :param requestdata:
+    :param TOOLS: {"yield": ["yieldtype", "id_ytype"], "soil": ["soiltype", "id_stype"], "canopy": ["canotype", "id_ctype"],
+             "sensor": ["sensotype", "id_stype"]}
+    :return:
+    """
+
+    metatable = parse.unquote(requestdata.get("metatable"))
+    # table name and id  for tool tables
+    tablename = TOOLS[metatable][0]
+    idfield = TOOLS[metatable][1]
+
+    cur = cur
+    conn = None
+    hadcursor = True if cur else False  # set if we are using an already existing connection
+
+
+    try:
+        if not cur:
+            if not conndict:
+                conndict = default_connection
+            conn = pgconnect(**conndict)
+            cur = conn.cursor()
+
+            result = get_records(tablename, [idfield, 'type'], conn, cur)
+
+            out = []
+            for i in result:
+                out.append({"id": i[0], "text": i[1]})
+            return out
+
+    except Exception as e:
+        print(e)
+        raise Exception("error querying database, try again")
+
+    finally:
+        if not hadcursor:  # if we passed the cursor we will not close the connection in this function
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
 
 
 def upload_metadata(requestdata, METADATA_ID_TYPES,METADATA_FIELDS_TYPES,METADATA_IDS, conndict=None, cur=None):
@@ -891,6 +936,163 @@ def select_data(requestdata,METADATA_DATA_TABLES, METADATA_IDS,DATA_IDS, UPLOAD_
                 conn.close()
 
 
+def get_datasets(requestdata, METADATA_IDS, conndict=None, cur=None):
+    """
+    Return datasets available
+    :param requestdata:  dictionary with request parameters
+
+            for example  {"metatable":"canopy"}
+
+    :param METADATA_IDS: id names for metadata tables
+    :param conndict: dictionary with connection properties, if None the default connection will be used
+    :param cur: psycopg2 cursor
+    :return: list of datasets
+    """
+    cur = cur
+    conn = None
+    hadcursor = True if cur else False  # set if we are using an already existing connection
+
+    metatable = parse.unquote(requestdata.get('metatable'))
+    metaid = METADATA_IDS[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->id_canopy
+
+    try:
+        if not cur:
+            if not conndict:
+                conndict = default_connection
+            conn = pgconnect(**conndict)
+            cur = conn.cursor()
+
+        #open metadata to get the valuemap disctionary
+        cur.execute("""SELECT %s,to_char(datetime, '"D/M/Y" DD/MM/YYYY - HH24:MI:SS') from %s;""", (AsIs(metaid), AsIs(metatable)))
+        result = cur.fetchall()
+
+        out = []
+        for r in result:
+            out.append({"id": r[0], "text": r[1]})
+        return out
+        # return [{"value":64, "text": "2017-10-18 05:06:00"},{ "value":65, "text": "2017-10-06 04:59:00"}]
+
+    except Exception as e:
+        print(e)
+        raise Exception("error querying database, try again")
+
+    finally:
+        if not hadcursor:  # if we passed the cursor we will not close the connection in this function
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
+
+
+def get_dataset_info(requestdata,METADATA_DATA_TABLES, METADATA_IDS, TOOLS, conndict=None, cur=None):
+    """
+    Return info  for a datasets
+    :param requestdata:  dictionary with request parameters
+
+            for example  {"metatable":"canopy", "iddataset": "64"}
+
+    :param METADATA_IDS: id names for metadata tables
+    :param TOOLS: id names and table name  for tools  -> {"canopy": ["canotype", "id_ctype"]}
+    :param conndict: dictionary with connection properties, if None the default connection will be used
+    :param cur: psycopg2 cursor
+    :return: info about a dataset
+    """
+    cur = cur
+    conn = None
+    hadcursor = True if cur else False  # set if we are using an already existing connection
+
+    metatable = parse.unquote(requestdata.get('metatable'))
+    id = parse.unquote(requestdata.get('datasetid'))
+    tablename = METADATA_DATA_TABLES[parse.unquote(requestdata.get('metatable'))]  # e.g. canopy->canodatum
+    metaid = METADATA_IDS[parse.unquote(requestdata.get('metatable'))]   # e.g. canopy->id_canopy
+    tooltable = TOOLS[parse.unquote(requestdata.get('metatable'))][0] # e.g. canopy->["canotype", "id_ctype"]
+    toolid = TOOLS[parse.unquote(requestdata.get('metatable'))][1] # e.g. canopy->["canotype", "id_ctype"]
+
+    try:
+        if not cur:
+            if not conndict:
+                conndict = default_connection
+            conn = pgconnect(**conndict)
+            cur = conn.cursor()
+
+
+
+        cur.execute("""SELECT count(*),ST_AsGeoJSON(ST_Extent(geom)) from %s where id_canopy=%s;""", (AsIs(tablename), AsIs(id)))
+        count = cur.fetchone()
+
+        if not count[0]:
+            return {}
+        else:
+            cur.execute("""SELECT tp.type, m.roworientation,m.swathwidth,m.ofset,m.rowspacing,m.valuemap,m.comments 
+                                from %s as m
+                                inner join %s as tp on m.%s = tp.%s 
+                                where %s=%s;""", (AsIs(metatable), AsIs(tooltable), AsIs(toolid),AsIs(toolid),AsIs(metaid),AsIs(id)  ))
+            result = cur.fetchone()
+
+            return {"bbox": json.loads(count[1])['coordinates'][0] ,"npoints": count[0], "tname": result[0], "rowor": result[1], "swath": result[2], "offs": result[3], "rowspac": result[4], "values": result[5],
+                     "comments": result[6]}
+
+    except Exception as e:
+        print(e)
+        raise Exception("error querying database, try again")
+
+    finally:
+        if not hadcursor:  # if we passed the cursor we will not close the connection in this function
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
+
+
+def add_tool(requestdata, TOOLS, conndict=None, cur=None):
+    """
+    Add a new tool to the database
+    :param requestdata:  dictionary with request parameters
+
+            for example  {"metatable": "canopy", "toolname": "supertool", "comments": "this is a super tool"}
+
+    :param TOOLS: id names and table name  for tools  -> {"canopy": ["canotype", "id_ctype"]}
+    :param conndict: dictionary with connection properties, if None the default connection will be used
+    :param cur: psycopg2 cursor
+    :return: None
+    """
+
+    cur = cur
+    conn = None
+    hadcursor = True if cur else False  # set if we are using an already existing connection
+
+    #metatable = parse.unquote(requestdata.get('metatable'))
+    tooltable = TOOLS[parse.unquote(requestdata.get('metatable'))][0]   # e.g. canopy->["canotype", "id_ctype"]
+    toolname = parse.unquote(requestdata.get('toolname'))
+
+    comments = None
+    if (requestdata.get('comments')):
+        comments = parse.unquote(requestdata.get('comments'))
+
+    try:
+        if not cur:
+            if not conndict:
+                conndict = default_connection
+            conn = pgconnect(**conndict)
+            cur = conn.cursor()
+
+        if comments:
+            cur.execute("""INSERT INTO %s (type, comments) VALUES (%s, %s);""", (AsIs(tooltable), toolname, comments))
+        else:
+            cur.execute("""INSERT INTO %s (type) VALUES (%s);""", (AsIs(tooltable), toolname))
+
+        conn.commit()
+
+    except Exception as e:
+        print(e)
+        raise Exception("error querying database, try again")
+
+    finally:
+        if not hadcursor:  # if we passed the cursor we will not close the connection in this function
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
 
 if __name__ == "__main__":
 
@@ -909,6 +1111,10 @@ if __name__ == "__main__":
     DATA_IDS = {"yield": "id_ydata", "soil": "id_sdata", "canopy": "id_cdata", "sensor": "id_sdata"}
     # id fields for sensor subtables
     SENSOR_IDS = {"colorgrade": "id_cgrade", "berrysize": "id_size", "berrycount": "id_count"}
+
+    # table name and id  for tool tables
+    TOOLS = {"yield": ["yieldtype", "id_ytype"], "soil": ["soiltype", "id_stype"], "canopy": ["canotype", "id_ctype"],
+             "sensor": ["sensotype", "id_stype"]}
 
 
     def tests():
@@ -1040,11 +1246,25 @@ if __name__ == "__main__":
 
     #test_get_vmap()
 
-
     def test_select():
         requestdata ={"metatable": "canopy", "datasetid": "2", "ids": "439689,439691,439692", "folderid": "a5f9e0915ecb94449b26a8dc52b970cc0", "exclude":"true"}
         requestdata ={"metatable": "canopy", "datasetid": "2", "ids": "439689,439691,439692", "folderid": "a5f9e0915ecb94449b26a8dc52b970cc0"}
         select_data(requestdata,METADATA_DATA_TABLES, METADATA_IDS, DATA_IDS, UPLOAD_ROOT)
 
-    test_select()
+    #test_select()
 
+    def test_get_datasets():
+        requestdata = {"metatable": "canopy"}
+        print(get_datasets(requestdata, METADATA_IDS))
+    #test_get_datasets()
+
+    def test_get_dataset_info():
+        requestdata = {"metatable": "canopy", "datasetid": "64"}
+        print(get_dataset_info(requestdata,METADATA_DATA_TABLES, METADATA_IDS, TOOLS))
+    #test_get_dataset_info()
+
+    def test_add_tool():
+        requestdata = {"metatable": "canopy", "toolname": "supertool", "comments": "this is a super tool"}
+        requestdata = {"metatable": "canopy", "toolname": "supertool2"}
+        print(add_tool(requestdata, TOOLS))
+    #test_add_tool()

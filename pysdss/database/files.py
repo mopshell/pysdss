@@ -59,7 +59,8 @@ def get_fields(requestdata, UPLOAD_ROOT, UPLOAD_FORMATS ):
                 fields += reader.__next__() #read just the first row
                 f.close()
 
-                return fields
+                # return fields
+                return [i.lower() for i in fields]
 
             elif ftype == "zip":
                 fields = ["not_available"]
